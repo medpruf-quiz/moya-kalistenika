@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.1.0. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.2.0. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.1.0";
+const BOOTSTRAP_VERSION = "1.2.0";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -19,7 +19,7 @@ const appTempPath = fm.joinPath(dir, "app.tmp.html");
 
 const genericDefaultState = {
   schema: 4,
-  version: "2.4.2",
+  version: "2.4.3",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120 }, activeSession: null
 };
@@ -74,15 +74,13 @@ async function requestString(url,timeout=12){
   return await req.loadString();
 }
 async function fetchManifest(){
-  const text=await requestString(VERSION_URL,10);
-  const meta=JSON.parse(text);
+  const meta=JSON.parse(await requestString(VERSION_URL,10));
   if(!meta||!/^\d+\.\d+\.\d+$/.test(String(meta.version||""))) throw new Error("Invalid version manifest");
   if(meta.minBootstrap&&!/^\d+\.\d+\.\d+$/.test(String(meta.minBootstrap))) throw new Error("Invalid bootstrap requirement");
   return meta;
 }
 async function fetchRemoteApp(meta){
-  const url=meta?.appUrl||REMOTE_APP_URL;
-  const text=await requestString(url,15);
+  const text=await requestString(meta?.appUrl||REMOTE_APP_URL,15);
   if(!validApp(text,meta?.version||null)) throw new Error("Downloaded app failed validation");
   return text;
 }
@@ -104,20 +102,66 @@ async function loadLocalApp(){
   }
   return await downloadInitialApp();
 }
-async function tryMigrationUpgrade(currentHTML){
+async function migrateUpdaterArchitecture(currentHTML){
   const current=appVersionFromHTML(currentHTML)||"0.0.0";
-  if(compareVersions(current,"2.4.1")>0) return currentHTML;
+  if(compareVersions(current,"2.4.3")>=0) return currentHTML;
   try{
     const meta=await fetchManifest();
-    if(compareVersions(meta.version,current)<=0) return currentHTML;
     if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0) return currentHTML;
+    if(compareVersions(meta.version,current)<=0) return currentHTML;
     const next=await fetchRemoteApp(meta);
     writeAppAtomic(next,meta.version);
     return next;
   }catch(e){
-    console.log("Bootstrap migration check skipped: "+e);
+    console.log("Updater migration skipped: "+e);
     return currentHTML;
   }
+}
+async function runManualUpdateCheck(currentHTML){
+  let notice=null,tone="good",html=currentHTML;
+  try{
+    const meta=await fetchManifest();
+    const current=appVersionFromHTML(html)||"0.0.0";
+    if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0){
+      notice="Для следующего обновления потребуется новая версия загрузчика Scriptable.";
+      tone="warn";
+      const a=new Alert();
+      a.title="Обновление загрузчика";
+      a.message="Доступна версия приложения "+meta.version+", но сначала нужно обновить bootstrap.js. Текущие данные не затронуты.";
+      a.addAction("OK");
+      await a.presentAlert();
+      return {html,notice,tone};
+    }
+    if(compareVersions(meta.version,current)<=0){
+      notice="У тебя актуальная версия "+current+".";
+      tone="good";
+      return {html,notice,tone};
+    }
+
+    const a=new Alert();
+    a.title="Доступно обновление "+meta.version;
+    const notes=Array.isArray(meta.notes)&&meta.notes.length?"\n\n"+meta.notes.map(x=>"• "+x).join("\n"):"";
+    a.message="Текущая версия: "+current+"."+notes+"\n\nЛичные данные останутся на iPhone.";
+    a.addAction("Установить");
+    a.addCancelAction("Не сейчас");
+    const choice=await a.presentAlert();
+
+    if(choice===0){
+      const next=await fetchRemoteApp(meta);
+      writeAppAtomic(next,meta.version);
+      html=next;
+      notice="Обновлено до версии "+meta.version+".";
+      tone="good";
+    }else{
+      notice="Обновление "+meta.version+" не установлено.";
+      tone="";
+    }
+  }catch(e){
+    console.log("Manual update check failed: "+e);
+    notice="Не удалось проверить обновление. Попробуй позже.";
+    tone="error";
+  }
+  return {html,notice,tone};
 }
 
 let state=readJSON(dataPath);
@@ -129,7 +173,7 @@ if(!state){
 let appHTML;
 try{
   appHTML=await loadLocalApp();
-  appHTML=await tryMigrationUpgrade(appHTML);
+  appHTML=await migrateUpdaterArchitecture(appHTML);
 }catch(e){
   const a=new Alert();
   a.title="Моя калистеника";
@@ -140,10 +184,23 @@ try{
   return;
 }
 
+let updateNotice=null;
+let updateTone="";
+const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
+if(action==="checkUpdate"){
+  const result=await runManualUpdateCheck(appHTML);
+  appHTML=result.html;
+  updateNotice=result.notice;
+  updateTone=result.tone;
+}
+
 const bootstrapMeta={
   version:BOOTSTRAP_VERSION,
   localAppVersion:appVersionFromHTML(appHTML),
-  repo:"medpruf-quiz/moya-kalistenika"
+  repo:"medpruf-quiz/moya-kalistenika",
+  runURL:URLScheme.forRunningScript(),
+  updateNotice,
+  updateTone
 };
 
 let html=appHTML
@@ -160,40 +217,6 @@ function getParam(url,name){
 function cleanupStateChunks(){
   const now=Date.now();
   Object.keys(incomingState).forEach(k=>{if(now-(incomingState[k].created||0)>60000)delete incomingState[k];});
-}
-async function notifyWeb(id,payload){
-  if(!id) return;
-  const js="window.__mkNativeResponse&&window.__mkNativeResponse("+JSON.stringify(String(id))+","+JSON.stringify(payload)+");";
-  try{await web.evaluateJavaScript(js,false);}catch(e){console.log("Update callback error: "+e);}
-}
-async function handleUpdateCheck(id){
-  try{
-    const meta=await fetchManifest();
-    const current=fm.fileExists(appPath)?appVersionFromHTML(fm.readString(appPath)):(bootstrapMeta.localAppVersion||"0.0.0");
-    if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0){
-      await notifyWeb(id,{ok:true,status:"bootstrap",meta});
-    }else if(compareVersions(meta.version,current)<=0){
-      await notifyWeb(id,{ok:true,status:"current",meta});
-    }else{
-      await notifyWeb(id,{ok:true,status:"available",meta});
-    }
-  }catch(e){
-    console.log("Update check failed: "+e);
-    await notifyWeb(id,{ok:false,error:String(e)});
-  }
-}
-async function handleUpdateInstall(id,expectedVersion){
-  try{
-    const meta=await fetchManifest();
-    if(expectedVersion&&meta.version!==expectedVersion) throw new Error("Version changed; check again");
-    if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0) throw new Error("Bootstrap update required");
-    const text=await fetchRemoteApp(meta);
-    writeAppAtomic(text,meta.version);
-    await notifyWeb(id,{ok:true,status:"installed",version:meta.version});
-  }catch(e){
-    console.log("Update install failed: "+e);
-    await notifyWeb(id,{ok:false,error:String(e)});
-  }
 }
 
 web.shouldAllowRequest=(req)=>{
@@ -217,12 +240,6 @@ web.shouldAllowRequest=(req)=>{
     }else if(url.includes("/action/copy-backup")){
       const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
       Pasteboard.copyString(text);
-    }else if(url.includes("/update/check")){
-      const id=getParam(url,"id");
-      handleUpdateCheck(id);
-    }else if(url.includes("/update/install")){
-      const id=getParam(url,"id"),version=getParam(url,"version");
-      handleUpdateInstall(id,version);
     }
     cleanupStateChunks();
   }catch(e){
