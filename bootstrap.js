@@ -267,6 +267,8 @@ if(action==="restoreBackup"){
   }catch(e){console.log("Backup restore failed: "+e);}
 }else if(action==="copyData"){
   try{
+    const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0;
+    if(expectedRevision&&stateRevision(state)<expectedRevision)throw new Error("Latest state revision was not persisted");
     const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
     Pasteboard.copyString(text);
     const a=new Alert();a.title="Готово";a.message="Текущие данные скопированы в буфер обмена.";a.addAction("OK");await a.presentAlert();
