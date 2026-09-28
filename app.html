@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.5.1" data-schema="5">
+<html lang="ru" data-mk-app="true" data-app-version="2.5.2" data-schema="5">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -214,7 +214,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.1";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.2";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -318,7 +318,7 @@ function normalizeDaily(rawDaily, rawSchema){
   const out={};
   if(!rawDaily || typeof rawDaily!=="object") return out;
   for(const [date,raw] of Object.entries(rawDaily)){
-    if(!isValidISODate(date)||!raw||typeof raw!=="object")continue;
+    if(!isValidISODate(date)||date>todayISO()||!raw||typeof raw!=="object")continue;
     const manualProtein=clamp(safeNumber(raw.manualProtein,safeNumber(raw.protein,0))||0,0,500);
     const mealDone={},mealChoices={};
     for(const type of Object.keys(MEALS)){
@@ -343,7 +343,7 @@ function normalizeHistoricalExercise(raw,workout,index){
   };
 }
 function normalizeHistoricalSession(raw,index){
-  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||!Array.isArray(raw.exercises))return null;
+  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||raw.date>todayISO()||!Array.isArray(raw.exercises))return null;
   const created=safeNumber(raw.created,parseLocalDate(raw.date).getTime());
   const exercises=raw.exercises.map((ex,i)=>normalizeHistoricalExercise(ex,raw.workout,i)).filter(Boolean);
   if(!exercises.length)return null;
@@ -358,7 +358,7 @@ function normalizeHistoricalSession(raw,index){
   };
 }
 function normalizeActiveSession(raw){
-  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||!Array.isArray(raw.exercises))return null;
+  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||raw.date>todayISO()||!Array.isArray(raw.exercises))return null;
   const defs=WORKOUTS[raw.workout].exercises;
   const oldExercises=raw.exercises;
   const exercises=defs.map((def,ei)=>{
@@ -395,40 +395,69 @@ function normalizeState(raw){
     proteinMax:boundedNumber(p.proteinMax,20,300,s.profile.proteinMax)
   };
   if(s.profile.goalMax<s.profile.goalMin)[s.profile.goalMin,s.profile.goalMax]=[s.profile.goalMax,s.profile.goalMin];
+  if(s.profile.goalMin<s.profile.startWeight)s.profile.goalMin=s.profile.startWeight;
+  if(s.profile.goalMax<s.profile.goalMin)s.profile.goalMax=s.profile.goalMin;
   if(s.profile.proteinMax<s.profile.proteinMin)[s.profile.proteinMin,s.profile.proteinMax]=[s.profile.proteinMax,s.profile.proteinMin];
-  s.metrics=Array.isArray(raw.metrics)?raw.metrics.map(x=>{
-    if(!x||!isValidISODate(x.date))return null;
+  const metricMap=new Map();
+  if(Array.isArray(raw.metrics))for(const x of raw.metrics){
+    if(!x||!isValidISODate(x.date)||x.date>todayISO())continue;
     const item={
       date:x.date,
       weight:boundedNumber(x.weight,40,150,null),
       waist:boundedNumber(x.waist,45,150,null),
       sleep:boundedNumber(x.sleep,0,16,null)
     };
-    return item.weight==null&&item.waist==null&&item.sleep==null?null:item;
-  }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date)):[];
+    if(item.weight==null&&item.waist==null&&item.sleep==null)continue;
+    const prev=metricMap.get(item.date)||{date:item.date,weight:null,waist:null,sleep:null};
+    metricMap.set(item.date,{
+      date:item.date,
+      weight:item.weight??prev.weight,
+      waist:item.waist??prev.waist,
+      sleep:item.sleep??prev.sleep
+    });
+  }
+  s.metrics=[...metricMap.values()].sort((a,b)=>a.date.localeCompare(b.date));
   s.sessions=Array.isArray(raw.sessions)?raw.sessions.map(normalizeHistoricalSession).filter(Boolean):[];
+  const seenSessionIds=new Set();
+  s.sessions=s.sessions.map((session,index)=>{
+    let id=session.id||`session-${index}`,suffix=1;
+    while(seenSessionIds.has(id))id=`${session.id||"session"}-${index}-${suffix++}`;
+    seenSessionIds.add(id);
+    return {...session,id};
+  });
   s.daily=normalizeDaily(raw.daily,rawSchema);
   s.settings={...s.settings,...(raw.settings||{})};
   s.settings.restSeconds=[60,90,120,180].includes(Number(s.settings.restSeconds))?Number(s.settings.restSeconds):120;
   const restEnd=safeNumber(s.settings.restEndAt,null);
   s.settings.restEndAt=restEnd!=null&&restEnd>Date.now()&&restEnd<Date.now()+7200000?restEnd:null;
   s.activeSession=normalizeActiveSession(raw.activeSession);
-  s.revision=Math.max(0,Math.floor(safeNumber(raw.revision,0)));
+  if(s.activeSession&&seenSessionIds.has(s.activeSession.id))s.activeSession.id=`${s.activeSession.id}-active-${Date.now()}`;
+  if(!s.activeSession)s.settings.restEndAt=null;
+  {const rev=safeNumber(raw.revision,0);s.revision=Number.isSafeInteger(rev)&&rev>=0?rev:0;}
   s.version=APP_VERSION;
   s.schema=5;
   return s;
 }
 let recoveredFromLocal=false;
+let nativeNormalizationNeeded=false;
 function readLocalState(){
   try{
+    if(window.__BOOTSTRAP_META__?.resetLocalCache){
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
     const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+    if(raw&&Number(raw.schema||2)>5)return null;
     return raw&&typeof raw==="object"?normalizeState(raw):null;
   }catch{return null;}
 }
 function loadInitialState(){
-  const nativeState=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):null;
+  const rawNative=window.__INITIAL_STATE__&&typeof window.__INITIAL_STATE__==="object"?window.__INITIAL_STATE__:null;
+  const nativeState=rawNative?normalizeState(rawNative):null;
+  nativeNormalizationNeeded=!!rawNative&&JSON.stringify(nativeState)!==JSON.stringify(rawNative);
   const localState=readLocalState();
-  if(localState&&(!nativeState||localState.revision>nativeState.revision)){
+  const sameRevisionConflict=localState&&nativeState&&localState.revision===nativeState.revision&&JSON.stringify(localState)!==JSON.stringify(nativeState);
+  if(localState&&(!nativeState||localState.revision>nativeState.revision||sameRevisionConflict)){
     recoveredFromLocal=true;
     return localState;
   }
@@ -436,7 +465,8 @@ function loadInitialState(){
 }
 
 let state=loadInitialState();
-let persistedShadow=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):clone(state);
+let uiShadow=clone(state);
+const dirtyPersistKeys=new Set();
 let selectedWorkout=state.activeSession?.workout||"A";
 let saveTimer=null,persistChain=Promise.resolve();
 let timerInterval=null,timerEndAt=null,timerDuration=state.settings.restSeconds||90;
@@ -459,7 +489,18 @@ function persistLocal(){
     return false;
   }
 }
-function toBase64Utf8(str){return btoa(unescape(encodeURIComponent(str)));}
+function toBase64Utf8(str){
+  const bytes=new TextEncoder().encode(str);
+  let binary="";
+  for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return btoa(binary);
+}
+function stateFingerprint(value){
+  const text=typeof value==="string"?value:JSON.stringify(value);
+  let h=2166136261;
+  for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}
+  return (h>>>0).toString(16).padStart(8,"0");
+}
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
 async function nativePersist(payload,mode="patch"){
   if(!window.__SCRIPTABLE_MODE__)return;
@@ -470,26 +511,31 @@ async function nativePersist(payload,mode="patch"){
   await bridgeImage(`https://scriptable.local/state/end?id=${id}`);
 }
 const PERSIST_KEYS=["schema","revision","version","profile","metrics","sessions","daily","settings","activeSession"];
-function buildStatePatch(target,base){
-  const patch={};
+function markDirtyKeys(target,base){
   for(const key of PERSIST_KEYS){
-    if(JSON.stringify(target[key])!==JSON.stringify(base?.[key]))patch[key]=target[key];
+    if(JSON.stringify(target[key])!==JSON.stringify(base?.[key]))dirtyPersistKeys.add(key);
   }
+}
+function buildDirtyPatch(target){
+  const patch={};
+  for(const key of dirtyPersistKeys)patch[key]=target[key];
   return patch;
 }
 function flushPersist(forceFull=false){
   clearTimeout(saveTimer);
   const target=clone(state);
-  const payload=forceFull?target:buildStatePatch(target,persistedShadow);
+  const payload=forceFull?target:buildDirtyPatch(target);
   if(!forceFull&&Object.keys(payload).length===0)return persistChain;
   const text=JSON.stringify(payload),mode=forceFull?"full":"patch";
-  persistChain=persistChain.catch(()=>{}).then(async()=>{await nativePersist(text,mode);persistedShadow=target;});
+  persistChain=persistChain.catch(()=>{}).then(()=>nativePersist(text,mode));
   return persistChain;
 }
 function save({immediate=false,forceFull=false}={}){
   state.version=APP_VERSION;
   state.schema=5;
   state.revision=Math.max(Math.max(0,Math.floor(safeNumber(state.revision,0)))+1,Date.now());
+  markDirtyKeys(state,uiShadow);
+  uiShadow=clone(state);
   const localOk=persistLocal();
   clearTimeout(saveTimer);
   if(immediate||!localOk)return flushPersist(forceFull||!localOk);
@@ -504,19 +550,20 @@ async function nativeAction(action,params={}){
 }
 
 function setUpdateStatus(text,tone=""){const el=document.getElementById("updateStatus");if(!el)return;el.textContent=text;el.className="update-status"+(tone?` ${tone}`:"");}
-function actionRunURL(action){
+function actionRunURL(action,params={}){
   const base=window.__BOOTSTRAP_META__?.runURL;
   if(!base)return null;
-  return base+(base.includes("?")?"&":"?")+"action="+encodeURIComponent(action)+"&t="+Date.now();
+  const query=Object.entries({action,t:Date.now(),...params}).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+  return base+(base.includes("?")?"&":"?")+query;
 }
-async function relaunchScriptableAction(action,statusText){
-  const url=actionRunURL(action);
+async function relaunchScriptableAction(action,statusText,params={}){
+  const url=actionRunURL(action,params);
   if(!url){toast("Действие доступно только в Scriptable");return;}
   if(statusText)setUpdateStatus(statusText);
   try{await flushPersist(true);}catch{}
   window.location.href=url;
 }
-async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…");}
+async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…",{expectedRevision:state.revision,expectedHash:stateFingerprint(state)});}
 
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),1800);}
 function armDanger(btn,normalText,onConfirm,armedText="Нажми ещё раз"){
@@ -612,14 +659,14 @@ function progressionHint(def,prev){
   const values=prev.sets.map(x=>safeNumber(x.reps,null)).filter(x=>x!=null);
   if(def.unit){
     if(values.length===def.sets&&values.every(x=>x>=def.max))return"В прошлый раз ты уверенно дошёл до верхней границы времени. Можно немного усложнить положение и снова начать ближе к нижней границе.";
-    if(values.length&&values.every(x=>x>=def.min))return"Попробуй добавить примерно 5 секунд в одном или нескольких подходах, сохранив положение корпуса.";
+    if(values.length===def.sets&&values.every(x=>x>=def.min))return"Попробуй добавить примерно 5 секунд в одном или нескольких подходах, сохранив положение корпуса.";
     return"Повтори примерно прошлое время и сначала удерживай положение увереннее.";
   }
   const reserves=prev.sets.map(x=>safeNumber(x.rir,null));
   const completeReserve=reserves.length===def.sets&&reserves.every(x=>x!=null);
   const avg=completeReserve?reserves.reduce((a,b)=>a+b,0)/reserves.length:null;
   if(values.length===def.sets&&values.every(x=>x>=def.max)&&completeReserve&&avg>=1.5)return"В прошлый раз ты уверенно дошёл до верхней границы. Можно немного усложнить вариант и снова начать ближе к нижней границе повторов.";
-  if(values.length&&values.every(x=>x>=def.min)){
+  if(values.length===def.sets&&values.every(x=>x>=def.min)){
     if(completeReserve&&avg<1)return"Повтори примерно прошлый объём и сделай его увереннее, не сокращая технику ради лишнего повтора.";
     return"Если техника оставалась чистой и был запас, попробуй добавить 1 повтор в одном или нескольких подходах.";
   }
@@ -639,14 +686,14 @@ function beep(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C
 document.querySelectorAll("[data-rest]").forEach(b=>b.addEventListener("click",()=>setRestDuration(Number(b.dataset.rest))));document.getElementById("timerToggle").addEventListener("click",()=>timerEndAt?pauseTimer():startTimer());document.addEventListener("visibilitychange",()=>{if(!document.hidden&&timerEndAt)tickTimer();});
 
 function renderNutrition(){
-  const d=daily(),min=state.profile.proteinMin,max=state.profile.proteinMax,mealP=mealProteinTotal(),manual=d.manualProtein,total=totalProtein();document.getElementById("proteinTotal").textContent=total;document.getElementById("proteinTarget").textContent=`/ ${min}–${max} г`;document.getElementById("proteinBar").style.width=`${clamp(total/min*100,0,100)}%`;document.getElementById("proteinBreakdown").textContent=`Отмеченные приёмы пищи: ${mealP} г · добавлено вручную: ${manual} г`;
+  const d=dailyRead(),min=state.profile.proteinMin,max=state.profile.proteinMax,mealP=mealProteinTotal(),manual=d.manualProtein,total=totalProtein();document.getElementById("proteinTotal").textContent=total;document.getElementById("proteinTarget").textContent=`/ ${min}–${max} г`;document.getElementById("proteinBar").style.width=`${clamp(total/min*100,0,100)}%`;document.getElementById("proteinBreakdown").textContent=`Отмеченные приёмы пищи: ${mealP} г · добавлено вручную: ${manual} г`;
   document.getElementById("mealPlan").innerHTML=Object.keys(MEAL_LABELS).map(type=>{const opt=mealOption(type),done=!!d.mealDone[type];return `<article class="meal-card ${done?"done":""}"><div class="meal-top"><div class="meal-type">${MEAL_LABELS[type]}</div><div class="meal-protein">≈ ${opt.protein} г белка</div></div><h3>${escapeHtml(opt.title)}</h3><p>${escapeHtml(opt.detail)}</p><div class="meal-actions"><button class="meal-done" data-meal-done="${type}">${done?"Отмечено ✓":"Я это съел"}</button><button data-next-meal="${type}">Другой вариант</button></div></article>`}).join("");
   document.querySelectorAll("[data-meal-done]").forEach(b=>b.addEventListener("click",()=>{const x=daily();x.mealDone[b.dataset.mealDone]=!x.mealDone[b.dataset.mealDone];save();renderNutrition();renderHome();}));
   document.querySelectorAll("[data-next-meal]").forEach(b=>b.addEventListener("click",()=>{const type=b.dataset.nextMeal,x=daily(),next=(mealIndex(type)+1)%MEALS[type].length,wasDone=!!x.mealDone[type];x.mealChoices[type]=next;if(wasDone)x.mealDone[type]=false;save();renderNutrition();renderHome();if(wasDone)toast("Вариант заменён — отметка о съеденном снята");}));
 }
 document.querySelectorAll("[data-add-protein]").forEach(b=>b.addEventListener("click",()=>{const d=daily();d.manualProtein=clamp(d.manualProtein+Number(b.dataset.addProtein),0,500);save();renderNutrition();renderHome();toast(`Добавлено ${b.dataset.addProtein} г`);}));
 document.getElementById("addProteinBtn").addEventListener("click",()=>{const el=document.getElementById("customProtein"),v=safeNumber(el.value);if(v==null||v<=0||v>150){toast("Укажи от 1 до 150 г белка");return;}const d=daily();d.manualProtein=clamp(d.manualProtein+v,0,500);el.value="";save();renderNutrition();renderHome();});
-document.getElementById("resetNutritionBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить сегодня",()=>{state.daily[todayISO()]={manualProtein:0,mealDone:{},mealChoices:{}};save({immediate:true});renderNutrition();renderHome();toast("Питание за сегодня сброшено");},"Ещё раз — сбросить"));
+document.getElementById("resetNutritionBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить сегодня",()=>{delete state.daily[todayISO()];save({immediate:true});renderNutrition();renderHome();toast("Питание за сегодня сброшено");},"Ещё раз — сбросить"));
 
 function inputNumber(id){const v=document.getElementById(id).value;return v===""?null:safeNumber(v,null);}
 function saveMetric(){
@@ -684,18 +731,44 @@ function drawWeightChart(){const c=document.getElementById("weightChart"),rect=c
 function renderWeightTrend(){const data=[...state.metrics].filter(x=>x.weight!=null).sort((a,b)=>a.date.localeCompare(b.date)),el=document.getElementById("weightTrend");if(data.length<2){el.textContent="Нужно хотя бы два измерения для тренда.";return;}const windowed=data.slice(-4),first=windowed[0],last=windowed[windowed.length-1],days=Math.max(1,(parseLocalDate(last.date)-parseLocalDate(first.date))/86400000),rate=(last.weight-first.weight)/(days/7);let note="в ориентире";if(rate<.1)note="медленнее ориентира";if(rate>.2)note="быстрее ориентира";const chartNote=data.length>24?" График показывает последние 24 измерения.":"";el.textContent=`Последний вес ${last.weight.toFixed(1)} кг · краткосрочно ${rate>=0?"+":""}${rate.toFixed(2)} кг/нед — ${note}.${chartNote}`;}
 
 function renderSettings(){const p=state.profile;for(const[id,key]of[["profileAge","age"],["profileHeight","height"],["profileStartWeight","startWeight"],["profileGoalMin","goalMin"],["profileGoalMax","goalMax"],["profileProteinMin","proteinMin"],["profileProteinMax","proteinMax"]])document.getElementById(id).value=p[key];const [lo,hi]=easyRunRange(),[waterLo,waterHi]=preWorkoutWaterRange();const run=document.getElementById("physRunZone"),water=document.getElementById("physWaterBefore");if(run)run.textContent=`${lo}–${hi} уд/мин`;if(water)water.textContent=`≈ ${waterLo}–${waterHi} мл`;document.getElementById("appVersion").textContent=APP_VERSION;const notice=window.__BOOTSTRAP_META__?.updateNotice;if(notice)setUpdateStatus(notice,window.__BOOTSTRAP_META__?.updateTone||"good");document.getElementById("resetActiveSessionBtn").classList.toggle("hidden",!state.activeSession);}
-document.getElementById("saveProfileBtn").addEventListener("click",()=>{const next={age:inputNumber("profileAge"),height:inputNumber("profileHeight"),startWeight:inputNumber("profileStartWeight"),goalMin:inputNumber("profileGoalMin"),goalMax:inputNumber("profileGoalMax"),proteinMin:inputNumber("profileProteinMin"),proteinMax:inputNumber("profileProteinMax")};if(Object.values(next).some(v=>v==null)||next.age<16||next.age>80||next.height<120||next.height>230||next.startWeight<40||next.startWeight>150||next.goalMin<40||next.goalMin>150||next.goalMax<40||next.goalMax>150||next.goalMax<next.goalMin||next.proteinMin<20||next.proteinMin>300||next.proteinMax<20||next.proteinMax>300||next.proteinMax<next.proteinMin){toast("Проверь значения профиля");return;}state.profile=next;save({immediate:true});renderSettings();renderHome();toast("Профиль сохранён");});
+document.getElementById("saveProfileBtn").addEventListener("click",()=>{const next={age:inputNumber("profileAge"),height:inputNumber("profileHeight"),startWeight:inputNumber("profileStartWeight"),goalMin:inputNumber("profileGoalMin"),goalMax:inputNumber("profileGoalMax"),proteinMin:inputNumber("profileProteinMin"),proteinMax:inputNumber("profileProteinMax")};if(Object.values(next).some(v=>v==null)||next.age<16||next.age>80||next.height<120||next.height>230||next.startWeight<40||next.startWeight>150||next.goalMin<40||next.goalMin>150||next.goalMin<next.startWeight||next.goalMax<40||next.goalMax>150||next.goalMax<next.goalMin||next.proteinMin<20||next.proteinMin>300||next.proteinMax<20||next.proteinMax>300||next.proteinMax<next.proteinMin){toast("Проверь значения профиля");return;}state.profile=next;save({immediate:true});renderSettings();renderHome();toast("Профиль сохранён");});
 
 document.getElementById("resetActiveSessionBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Удалить незавершённую тренировку",()=>{state.activeSession=null;pauseTimer();selectedWorkout="A";save({immediate:true});renderSettings();renderHome();toast("Незавершённая тренировка удалена");}));
 document.getElementById("resetSessionsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю тренировок",()=>{state.sessions=[];save({immediate:true});renderSettings();renderHome();toast("История тренировок очищена");}));
 document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить все измерения",()=>{state.metrics=[];save({immediate:true});renderSettings();renderHome();toast("Измерения очищены");}));
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
-document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{pauseTimer();if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("fullReset");return;}state=clone(DEFAULT_STATE);selectedWorkout="A";timerDuration=state.settings.restSeconds;await save({immediate:true,forceFull:true});renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
+document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{pauseTimer();if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("fullReset",null,{profile:JSON.stringify(state.profile)});return;}state=clone(DEFAULT_STATE);selectedWorkout="A";timerDuration=state.settings.restSeconds;await save({immediate:true,forceFull:true});renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
-document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
+document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData",null,{expectedRevision:state.revision,expectedHash:stateFingerprint(state)});return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
-document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true,forceFull:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
-
+document.getElementById("restoreBtn").addEventListener("click",e=>{
+  const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();
+  if(!text){toast("Сначала вставь сохранённый текст");return;}
+  let parsed;
+  try{parsed=JSON.parse(text);}catch{toast("Не удалось распознать резервную копию");return;}
+  if(!parsed||typeof parsed!=="object"||!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile){toast("В резервной копии не хватает обязательных данных");return;}
+  if(Number(parsed.schema||2)>5){toast("Эта копия создана более новой версией приложения");return;}
+  armDanger(btn,"Восстановить данные",()=>{
+    pauseTimer(false);
+    state=normalizeState(parsed);
+    uiShadow=clone(state);
+    dirtyPersistKeys.clear();
+    for(const key of PERSIST_KEYS)dirtyPersistKeys.add(key);
+    selectedWorkout=state.activeSession?.workout||"A";
+    timerDuration=state.settings.restSeconds;
+    timerEndAt=safeNumber(state.settings.restEndAt,null);
+    if(timerEndAt&&timerEndAt>Date.now()){
+      clearInterval(timerInterval);
+      timerInterval=setInterval(tickTimer,250);
+      tickTimer();
+      nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});
+    }
+    save({immediate:true,forceFull:true});
+    document.getElementById("restoreText").value="";
+    renderSettings();renderHome();renderWorkouts();
+    toast("Данные восстановлены");
+  },"Ещё раз — восстановить");
+});
 document.getElementById("checkUpdateBtn").addEventListener("click",checkForUpdate);
 
 window.addEventListener("resize",()=>{if(document.getElementById("view-progress").classList.contains("active"))drawWeightChart();});
@@ -705,9 +778,12 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 window.addEventListener("beforeunload",persistBeforeSuspend);
 if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
 timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
-if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();}else{timerEndAt=null;state.settings.restEndAt=null;}
+if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}else{timerEndAt=null;state.settings.restEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});}
 window.__MK_READY__=true;
-if(recoveredFromLocal||Number(window.__INITIAL_STATE__?.schema||0)<5)save({immediate:true,forceFull:true});
+if(recoveredFromLocal||nativeNormalizationNeeded||Number(window.__INITIAL_STATE__?.schema||0)<5){
+  for(const key of PERSIST_KEYS)dirtyPersistKeys.add(key);
+  save({immediate:true,forceFull:true});
+}
 </script>
 </body>
 </html>

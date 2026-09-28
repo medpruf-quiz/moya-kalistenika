@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.4.0. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.5.0. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.4.0";
+const BOOTSTRAP_VERSION = "1.5.0";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -14,16 +14,15 @@ const dataPath = fm.joinPath(dir, "data.json");
 const dataBackupPath = fm.joinPath(dir, "data.backup.json");
 const dataBackupTempPath = fm.joinPath(dir, "data.backup.tmp.json");
 const dataTempPath = fm.joinPath(dir, "data.tmp.json");
-const profileBasePath = fm.joinPath(dir, "profile.local.json");
-const profileBaseTempPath = fm.joinPath(dir, "profile.local.tmp.json");
 const appPath = fm.joinPath(dir, "app.html");
 const appBackupPath = fm.joinPath(dir, "app.backup.html");
+const appBackupTempPath = fm.joinPath(dir, "app.backup.tmp.html");
 const appTempPath = fm.joinPath(dir, "app.tmp.html");
 
 const genericDefaultState = {
   schema: 5,
   revision: 0,
-  version: "2.5.1",
+  version: "2.5.2",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120, restEndAt:null }, activeSession: null
 };
@@ -44,7 +43,6 @@ function writeDataPrimary(text){
   JSON.parse(text);
   if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
   fm.writeString(dataTempPath,text);
-  if(fm.fileExists(dataPath))fm.remove(dataPath);
   fm.move(dataTempPath,dataPath);
 }
 function writeDataAtomic(text){writeDataPrimary(text);}
@@ -52,12 +50,39 @@ function writeBackupSnapshot(text){
   JSON.parse(text);
   if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
   fm.writeString(dataBackupTempPath,text);
-  if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
   fm.move(dataBackupTempPath,dataBackupPath);
 }
 function dataSchema(obj){
   const n=Number(obj?.schema);
   return Number.isInteger(n)&&n>0?n:2;
+}
+function stateRevision(obj){
+  const n=Number(obj?.revision);
+  return Number.isSafeInteger(n)&&n>=0?n:0;
+}
+function stateFingerprint(value){
+  const text=typeof value==="string"?value:JSON.stringify(value);
+  let h=2166136261;
+  for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}
+  return (h>>>0).toString(16).padStart(8,"0");
+}
+function matchesExpectedState(currentState,expectedRevision,expectedHash){
+  if(expectedRevision&&stateRevision(currentState)<expectedRevision)return false;
+  if(expectedHash&&stateFingerprint(currentState)!==expectedHash)return false;
+  return true;
+}
+function newestState(a,b){
+  if(!a)return b||null;
+  if(!b)return a;
+  return stateRevision(b)>stateRevision(a)?b:a;
+}
+function readBackupSnapshot(){
+  const primary=readJSON(dataBackupPath),temp=readJSON(dataBackupTempPath);
+  const best=newestState(primary,temp);
+  if(best&&temp&&best===temp){
+    try{fm.move(dataBackupTempPath,dataBackupPath);}catch(e){console.log("Backup temp recovery failed: "+e);}
+  }
+  return best;
 }
 function validProfile(profile){
   if(!profile||typeof profile!=="object")return false;
@@ -65,28 +90,8 @@ function validProfile(profile){
   if(keys.some(k=>!Number.isFinite(Number(profile[k]))))return false;
   const p=Object.fromEntries(keys.map(k=>[k,Number(profile[k])]));
   return p.age>=16&&p.age<=80&&p.height>=120&&p.height<=230&&p.startWeight>=40&&p.startWeight<=150&&
-    p.goalMin>=40&&p.goalMin<=150&&p.goalMax>=p.goalMin&&p.goalMax<=150&&
+    p.goalMin>=p.startWeight&&p.goalMin>=40&&p.goalMin<=150&&p.goalMax>=p.goalMin&&p.goalMax<=150&&
     p.proteinMin>=20&&p.proteinMin<=300&&p.proteinMax>=p.proteinMin&&p.proteinMax<=300;
-}
-function writeProfileBaseline(profile){
-  if(!validProfile(profile))return false;
-  const text=JSON.stringify(profile);
-  if(fm.fileExists(profileBaseTempPath))fm.remove(profileBaseTempPath);
-  fm.writeString(profileBaseTempPath,text);
-  if(fm.fileExists(profileBasePath))fm.remove(profileBasePath);
-  fm.move(profileBaseTempPath,profileBasePath);
-  return true;
-}
-function readProfileBaseline(){
-  const p=readJSON(profileBasePath);
-  return validProfile(p)?p:null;
-}
-function ensureProfileBaseline(currentState){
-  const existing=readProfileBaseline();
-  if(existing)return existing;
-  const profile=validProfile(currentState?.profile)?currentState.profile:genericDefaultState.profile;
-  writeProfileBaseline(profile);
-  return profile;
 }
 function appVersionFromHTML(text){
   const m=String(text||"").match(/data-app-version="(\d+\.\d+\.\d+)"/);
@@ -111,14 +116,20 @@ function validApp(text,expectedVersion=null,expectedSchema=null){
 function appCompatibleWithData(text,currentDataSchema){
   return validApp(text)&&appSchemaFromHTML(text)>=currentDataSchema;
 }
+function writeAppPrimary(text){
+  if(!validApp(text))throw new Error("Invalid app package");
+  if(fm.fileExists(appTempPath))fm.remove(appTempPath);
+  fm.writeString(appTempPath,text);
+  fm.move(appTempPath,appPath);
+}
 function writeAppAtomic(text,expectedVersion=null,expectedSchema=null){
   if(!validApp(text,expectedVersion,expectedSchema))throw new Error("Invalid app package");
-  if(fm.fileExists(appTempPath)) fm.remove(appTempPath);
+  if(fm.fileExists(appTempPath))fm.remove(appTempPath);
   fm.writeString(appTempPath,text);
   if(fm.fileExists(appPath)){
-    if(fm.fileExists(appBackupPath)) fm.remove(appBackupPath);
-    fm.copy(appPath,appBackupPath);
-    fm.remove(appPath);
+    if(fm.fileExists(appBackupTempPath))fm.remove(appBackupTempPath);
+    fm.copy(appPath,appBackupTempPath);
+    fm.move(appBackupTempPath,appBackupPath);
   }
   fm.move(appTempPath,appPath);
 }
@@ -156,21 +167,21 @@ async function loadLocalApp(currentDataSchema){
   if(fm.fileExists(appBackupPath)){
     const backup=fm.readString(appBackupPath);
     if(appCompatibleWithData(backup,currentDataSchema)){
-      fm.writeString(appPath,backup);
+      writeAppPrimary(backup);
       return backup;
     }
   }
   return await downloadInitialApp(currentDataSchema);
 }
 async function runAutomaticBackupRestore(currentState){
-  const backup=readJSON(dataBackupPath);
+  const backup=readBackupSnapshot();
   if(!backup){
     const a=new Alert();a.title="Резервная копия";a.message="Автоматическая резервная копия не найдена.";a.addAction("OK");await a.presentAlert();
     return currentState;
   }
   const a=new Alert();
   a.title="Восстановить резервную копию?";
-  a.message="Текущие данные будут заменены состоянием на начало предыдущего запуска приложения.";
+  a.message="Текущие данные будут заменены состоянием на начало этого запуска приложения.";
   a.addAction("Восстановить");
   a.addCancelAction("Отмена");
   const choice=await a.presentAlert();
@@ -213,6 +224,7 @@ async function runManualUpdateCheck(currentHTML){
     const choice=await a.presentAlert();
 
     if(choice===0){
+      writeBackupSnapshot(JSON.stringify(state));
       const next=await fetchRemoteApp(meta);
       writeAppAtomic(next,meta.version,meta.schema);
       html=next;
@@ -231,21 +243,32 @@ async function runManualUpdateCheck(currentHTML){
 }
 
 const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
-let state=readJSON(dataPath);
+const primaryState=readJSON(dataPath),interruptedState=readJSON(dataTempPath);
+let state=newestState(primaryState,interruptedState);
 if(!state){
-  const recovered=readJSON(dataBackupPath);
-  state=recovered||genericDefaultState;
-  try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
+  const recovered=readBackupSnapshot();
+  if(recovered){
+    state=recovered;
+  }else{
+    state=JSON.parse(JSON.stringify(genericDefaultState));
+  }
 }
-try{ensureProfileBaseline(state);}catch(e){console.log("Profile baseline init failed: "+e);}
+if(!primaryState||state!==primaryState){
+  try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
+}else if(fm.fileExists(dataTempPath)){
+  try{fm.remove(dataTempPath);}catch(e){}
+}
+let updateCheckAllowed=true;
+let preUpdateNotice=null;
+let preUpdateTone="";
 
 if(action==="restoreBackup"){
-  try{
-    state=await runAutomaticBackupRestore(state);
-    if(validProfile(state?.profile))writeProfileBaseline(state.profile);
-  }catch(e){console.log("Backup restore failed: "+e);}
+  try{state=await runAutomaticBackupRestore(state);}
+  catch(e){console.log("Backup restore failed: "+e);}
 }else if(action==="copyData"){
   try{
+    const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0,expectedHash=args?.queryParameters?.expectedHash||"";
+    if(!matchesExpectedState(state,expectedRevision,expectedHash))throw new Error("Latest state was not persisted");
     const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
     Pasteboard.copyString(text);
     const a=new Alert();a.title="Готово";a.message="Текущие данные скопированы в буфер обмена.";a.addAction("OK");await a.presentAlert();
@@ -253,21 +276,35 @@ if(action==="restoreBackup"){
     console.log("Copy data failed: "+e);
     const a=new Alert();a.title="Не удалось скопировать";a.message="Текущие данные не удалось поместить в буфер обмена.";a.addAction("OK");await a.presentAlert();
   }
-  try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }else if(action==="fullReset"){
   try{
     await Notification.removePending(["moya-kalistenika-rest-timer"]).catch(()=>{});
-    const localProfile=readProfileBaseline()||(validProfile(state?.profile)?state.profile:genericDefaultState.profile);
-    state=JSON.parse(JSON.stringify(genericDefaultState));
-    state.profile=JSON.parse(JSON.stringify(localProfile));
-    state.revision=Date.now()+1;
-    writeDataPrimary(JSON.stringify(state));
-    if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
-    if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
-    if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
+    let requestedProfile=null;
+    try{requestedProfile=JSON.parse(args?.queryParameters?.profile||"null");}catch(e){}
+    const localProfile=validProfile(requestedProfile)?requestedProfile:(validProfile(state?.profile)?state.profile:genericDefaultState.profile);
+    const resetState=JSON.parse(JSON.stringify(genericDefaultState));
+    resetState.profile=JSON.parse(JSON.stringify(localProfile));
+    resetState.revision=Date.now()+1;
+    writeDataPrimary(JSON.stringify(resetState));
+    state=resetState;
+    for(const p of [dataBackupPath,dataBackupTempPath,dataTempPath]){
+      if(!fm.fileExists(p))continue;
+      try{fm.remove(p);}
+      catch(e){
+        try{fm.writeString(p,JSON.stringify(resetState));}
+        catch(inner){console.log("Reset cleanup failed for "+p+": "+inner);}
+      }
+    }
   }catch(e){
     console.log("Full reset failed: "+e);
     const a=new Alert();a.title="Сброс не выполнен";a.message="Не удалось безопасно очистить данные. Текущий файл оставлен без намеренной замены.";a.addAction("OK");await a.presentAlert();
+  }
+}else if(action==="checkUpdate"){
+  const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0,expectedHash=args?.queryParameters?.expectedHash||"";
+  if(!matchesExpectedState(state,expectedRevision,expectedHash)){
+    updateCheckAllowed=false;
+    preUpdateNotice="Не удалось подтвердить последнее сохранение. Данные не изменены; попробуй проверить обновление ещё раз.";
+    preUpdateTone="error";
   }
 }else{
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
@@ -286,9 +323,9 @@ try{
   return;
 }
 
-let updateNotice=null;
-let updateTone="";
-if(action==="checkUpdate"){
+let updateNotice=preUpdateNotice;
+let updateTone=preUpdateTone;
+if(action==="checkUpdate"&&updateCheckAllowed){
   const result=await runManualUpdateCheck(appHTML);
   appHTML=result.html;
   updateNotice=result.notice;
@@ -302,7 +339,8 @@ function bootstrapMetaFor(appText){
     repo:"medpruf-quiz/moya-kalistenika",
     runURL:URLScheme.forRunningScript(),
     updateNotice,
-    updateTone
+    updateTone,
+    resetLocalCache: action==="fullReset"
   };
 }
 function injectApp(appText){
@@ -324,13 +362,18 @@ function cleanupStateChunks(){
 }
 
 const REST_TIMER_NOTIFICATION_ID="moya-kalistenika-rest-timer";
+let restNotificationChain=Promise.resolve();
+function queueRestNotification(task){
+  restNotificationChain=restNotificationChain.catch(()=>{}).then(task);
+  return restNotificationChain;
+}
 async function cancelRestNotification(){
   try{await Notification.removePending([REST_TIMER_NOTIFICATION_ID]);}
   catch(e){console.log("Rest notification cancel failed: "+e);}
 }
 async function scheduleRestNotification(seconds){
   const sec=Number(seconds);
-  if(!Number.isFinite(sec)||sec<10||sec>3600)return;
+  if(!Number.isFinite(sec)||sec<1||sec>3600)return;
   await cancelRestNotification();
   const n=new Notification();
   n.identifier=REST_TIMER_NOTIFICATION_ID;
@@ -376,15 +419,14 @@ web.shouldAllowRequest=(req)=>{
           if(nextRevision>=currentRevision){
             writeDataAtomic(JSON.stringify(next));
             state=next;
-            if(validProfile(next?.profile))writeProfileBaseline(next.profile);
           }
         }
       }
       delete incomingState[id];
     }else if(url.includes("/action/rest-timer-start")){
-      scheduleRestNotification(Number(getParam(url,"seconds"))).catch(e=>console.log("Rest timer start failed: "+e));
+      queueRestNotification(()=>scheduleRestNotification(Number(getParam(url,"seconds")))).catch(e=>console.log("Rest timer start failed: "+e));
     }else if(url.includes("/action/rest-timer-stop")){
-      cancelRestNotification().catch(e=>console.log("Rest timer stop failed: "+e));
+      queueRestNotification(cancelRestNotification).catch(e=>console.log("Rest timer stop failed: "+e));
     }
     cleanupStateChunks();
   }catch(e){
@@ -408,11 +450,16 @@ if(!ready){
     if(appCompatibleWithData(candidate,dataSchema(state)))rollback=candidate;
   }
   if(rollback){
-    fm.writeString(appPath,rollback);
-    appHTML=rollback;
-    updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
-    updateTone="warn";
-    ready=await loadAndPreflight(appHTML);
+    try{
+      writeAppPrimary(rollback);
+      appHTML=rollback;
+      updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
+      updateTone="warn";
+      ready=await loadAndPreflight(appHTML);
+    }catch(e){
+      console.log("App rollback write failed: "+e);
+      ready=false;
+    }
   }
 }
 if(!ready){
