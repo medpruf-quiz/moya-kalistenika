@@ -278,7 +278,10 @@ if(action==="restoreBackup"){
 }else if(action==="fullReset"){
   try{
     await Notification.removePending(["moya-kalistenika-rest-timer"]).catch(()=>{});
-    const localProfile=readProfileBaseline()||(validProfile(state?.profile)?state.profile:genericDefaultState.profile);
+    let requestedProfile=null;
+    try{requestedProfile=JSON.parse(args?.queryParameters?.profile||"null");}catch(e){}
+    const localProfile=validProfile(requestedProfile)?requestedProfile:(readProfileBaseline()||(validProfile(state?.profile)?state.profile:genericDefaultState.profile));
+    writeProfileBaseline(localProfile);
     state=JSON.parse(JSON.stringify(genericDefaultState));
     state.profile=JSON.parse(JSON.stringify(localProfile));
     state.revision=Date.now()+1;
