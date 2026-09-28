@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.4.1">
+<html lang="ru" data-mk-app="true" data-app-version="2.4.2">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -213,7 +213,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.4.1";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.4.2";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -359,41 +359,86 @@ async function nativeAction(action){if(!window.__SCRIPTABLE_MODE__)return false;
 const UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/version.json";
 const UPDATE_APP_URL="https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/app.html";
 let pendingUpdateMeta=null;
+const nativeUpdateWaiters=new Map();
+
+window.__mkNativeResponse=(id,payload)=>{
+  const waiter=nativeUpdateWaiters.get(String(id));
+  if(!waiter)return;
+  clearTimeout(waiter.timer);
+  nativeUpdateWaiters.delete(String(id));
+  waiter.resolve(payload||{ok:false,error:"Пустой ответ Scriptable"});
+};
+
 function versionParts(v){return String(v||"0").split(".").map(x=>parseInt(x,10)||0).slice(0,3).concat([0,0,0]).slice(0,3);}
 function compareVersions(a,b){const aa=versionParts(a),bb=versionParts(b);for(let i=0;i<3;i++){if(aa[i]>bb[i])return 1;if(aa[i]<bb[i])return -1;}return 0;}
 function setUpdateStatus(text,tone=""){const el=document.getElementById("updateStatus");if(!el)return;el.textContent=text;el.className="update-status"+(tone?` ${tone}`:"");}
-async function nativeInstallApp(text,version){
-  if(!window.__SCRIPTABLE_MODE__)throw new Error("Обновление доступно только в Scriptable");
-  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,8),b64=toBase64Utf8(text),chunks=[];
-  for(let i=0;i<b64.length;i+=3000)chunks.push(b64.slice(i,i+3000));
-  await bridgeImage(`https://scriptable.local/app/begin?id=${id}&parts=${chunks.length}&version=${encodeURIComponent(version)}`);
-  for(let i=0;i<chunks.length;i++)await bridgeImage(`https://scriptable.local/app/chunk?id=${id}&i=${i}&d=${encodeURIComponent(chunks[i])}`);
-  await bridgeImage(`https://scriptable.local/app/end?id=${id}`);
-}
-async function checkForUpdate(){
-  const checkBtn=document.getElementById("checkUpdateBtn"),installBtn=document.getElementById("installUpdateBtn");
-  checkBtn.disabled=true;installBtn.classList.add("hidden");pendingUpdateMeta=null;setUpdateStatus("Проверяю GitHub…");
-  try{
-    const r=await fetch(`${UPDATE_MANIFEST_URL}?t=${Date.now()}`,{cache:"no-store"});if(!r.ok)throw new Error(`HTTP ${r.status}`);const meta=await r.json();
-    if(!meta||!/^\\d+\\.\\d+\\.\\d+$/.test(String(meta.version||"")))throw new Error("Некорректный файл версии");
-    const bootstrapVersion=window.__BOOTSTRAP_META__?.version||"0.0.0";
-    if(compareVersions(bootstrapVersion,meta.minBootstrap||"0.0.0")<0){setUpdateStatus(`Доступна версия ${meta.version}, но для неё нужен новый загрузчик Scriptable. Не устанавливаю автоматически.`,"warn");return;}
-    if(compareVersions(meta.version,APP_VERSION)<=0){setUpdateStatus(`У тебя актуальная версия ${APP_VERSION}.`,"good");return;}
-    pendingUpdateMeta=meta;installBtn.textContent=`Установить ${meta.version}`;installBtn.classList.remove("hidden");
-    const note=Array.isArray(meta.notes)&&meta.notes.length?` ${meta.notes[0]}`:"";setUpdateStatus(`Доступна версия ${meta.version}.${note}`,"good");
-  }catch(e){setUpdateStatus("Не удалось проверить обновление. Интернет для обычной работы приложения не нужен; попробуй позже.","error");}
-  finally{checkBtn.disabled=false;}
-}
-async function installPendingUpdate(){
-  const btn=document.getElementById("installUpdateBtn");if(!pendingUpdateMeta)return;btn.disabled=true;setUpdateStatus(`Скачиваю ${pendingUpdateMeta.version}…`);
-  try{
-    const url=pendingUpdateMeta.appUrl||UPDATE_APP_URL,r=await fetch(`${url}${url.includes("?")?"&":"?"}t=${Date.now()}`,{cache:"no-store"});if(!r.ok)throw new Error(`HTTP ${r.status}`);const text=await r.text();
-    if(text.length<20000||!text.includes('data-mk-app="true"')||!text.includes(`data-app-version="${pendingUpdateMeta.version}"`)||!text.includes("__STATE_JSON__")||!text.includes("__BOOTSTRAP_META_JSON__"))throw new Error("Проверка файла не пройдена");
-    await nativeInstallApp(text,pendingUpdateMeta.version);setUpdateStatus(`Версия ${pendingUpdateMeta.version} установлена. Закрой приложение и открой снова — данные останутся на месте.`,"good");btn.classList.add("hidden");pendingUpdateMeta=null;
-  }catch(e){setUpdateStatus("Обновление не установлено. Текущая версия сохранена без изменений.","error");}
-  finally{btn.disabled=false;}
+
+function nativeUpdateRequest(action,params={}){
+  return new Promise((resolve,reject)=>{
+    const id=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+    const timer=setTimeout(()=>{nativeUpdateWaiters.delete(id);reject(new Error("Scriptable не ответил вовремя"));},15000);
+    nativeUpdateWaiters.set(id,{resolve,reject,timer});
+    const query=Object.entries({id,...params}).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+    bridgeImage(`https://scriptable.local/update/${action}?${query}`);
+  });
 }
 
+async function webCheckForUpdate(){
+  const r=await fetch(`${UPDATE_MANIFEST_URL}?t=${Date.now()}`,{cache:"no-store"});
+  if(!r.ok)throw new Error(`HTTP ${r.status}`);
+  const meta=await r.json();
+  return {ok:true,status:compareVersions(meta.version,APP_VERSION)>0?"available":"current",meta};
+}
+
+async function checkForUpdate(){
+  const checkBtn=document.getElementById("checkUpdateBtn"),installBtn=document.getElementById("installUpdateBtn");
+  checkBtn.disabled=true;installBtn.classList.add("hidden");pendingUpdateMeta=null;setUpdateStatus("Проверяю обновление…");
+  try{
+    const result=window.__SCRIPTABLE_MODE__?await nativeUpdateRequest("check"):await webCheckForUpdate();
+    if(!result?.ok)throw new Error(result?.error||"Не удалось проверить обновление");
+    const meta=result.meta||{};
+    if(result.status==="bootstrap"){
+      setUpdateStatus(`Доступна версия ${meta.version||"новее"}, но сначала нужно обновить загрузчик Scriptable.`,"warn");
+      return;
+    }
+    if(result.status==="current"){
+      setUpdateStatus(`У тебя актуальная версия ${APP_VERSION}.`,"good");
+      return;
+    }
+    if(result.status!=="available"||!meta.version)throw new Error("Некорректный ответ проверки");
+    pendingUpdateMeta=meta;
+    installBtn.textContent=`Установить ${meta.version}`;
+    installBtn.classList.remove("hidden");
+    const note=Array.isArray(meta.notes)&&meta.notes.length?` ${meta.notes[0]}`:"";
+    setUpdateStatus(`Доступна версия ${meta.version}.${note}`,"good");
+  }catch(e){
+    console.log("Update check error: "+e);
+    setUpdateStatus("Не удалось проверить обновление. Попробуй ещё раз позже.","error");
+  }finally{checkBtn.disabled=false;}
+}
+
+async function installPendingUpdate(){
+  const btn=document.getElementById("installUpdateBtn");
+  if(!pendingUpdateMeta)return;
+  btn.disabled=true;setUpdateStatus(`Устанавливаю ${pendingUpdateMeta.version}…`);
+  try{
+    if(window.__SCRIPTABLE_MODE__){
+      const result=await nativeUpdateRequest("install",{version:pendingUpdateMeta.version});
+      if(!result?.ok)throw new Error(result?.error||"Scriptable не установил обновление");
+    }else{
+      const url=pendingUpdateMeta.appUrl||UPDATE_APP_URL;
+      const r=await fetch(`${url}${url.includes("?")?"&":"?"}t=${Date.now()}`,{cache:"no-store"});
+      if(!r.ok)throw new Error(`HTTP ${r.status}`);
+      const text=await r.text();
+      if(text.length<20000||!text.includes('data-mk-app="true"')||!text.includes(`data-app-version="${pendingUpdateMeta.version}"`))throw new Error("Проверка файла не пройдена");
+    }
+    setUpdateStatus(`Версия ${pendingUpdateMeta.version} установлена. Закрой приложение и открой снова. Данные останутся на месте.`,"good");
+    btn.classList.add("hidden");pendingUpdateMeta=null;
+  }catch(e){
+    console.log("Update install error: "+e);
+    setUpdateStatus("Обновление не установлено. Текущая версия сохранена без изменений.","error");
+  }finally{btn.disabled=false;}
+}
 
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),1800);}
 function armDanger(btn,normalText,onConfirm,armedText="Нажми ещё раз"){
