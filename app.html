@@ -817,6 +817,7 @@ window.addEventListener("load",()=>{
       nativeAction("rest-timer-stop").catch(()=>{});
     }
     if(startupNeedsFullSync)save({immediate:true,forceFull:true});
+    else if(dirtyPersistKeys.size)flushPersist(false);
   },0);
 },{once:true});
 </script>
