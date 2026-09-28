@@ -1,0 +1,11 @@
+{
+  "version": "2.4.0",
+  "schema": 4,
+  "minBootstrap": "1.0.0",
+  "appUrl": "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/app.html",
+  "publishedAt": "2026-09-28",
+  "notes": [
+    "Добавлено безопасное локальное обновление кода через GitHub без передачи тренировочных данных.",
+    "Код приложения и пользовательские данные теперь физически разделены."
+  ]
+}
