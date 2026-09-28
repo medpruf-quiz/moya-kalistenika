@@ -333,7 +333,7 @@ async function cancelRestNotification(){
 }
 async function scheduleRestNotification(seconds){
   const sec=Number(seconds);
-  if(!Number.isFinite(sec)||sec<10||sec>3600)return;
+  if(!Number.isFinite(sec)||sec<1||sec>3600)return;
   await cancelRestNotification();
   const n=new Notification();
   n.identifier=REST_TIMER_NOTIFICATION_ID;
