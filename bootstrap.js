@@ -18,6 +18,7 @@ const profileBasePath = fm.joinPath(dir, "profile.local.json");
 const profileBaseTempPath = fm.joinPath(dir, "profile.local.tmp.json");
 const appPath = fm.joinPath(dir, "app.html");
 const appBackupPath = fm.joinPath(dir, "app.backup.html");
+const appBackupTempPath = fm.joinPath(dir, "app.backup.tmp.html");
 const appTempPath = fm.joinPath(dir, "app.tmp.html");
 
 const genericDefaultState = {
@@ -136,8 +137,9 @@ function writeAppAtomic(text,expectedVersion=null,expectedSchema=null){
   if(fm.fileExists(appTempPath))fm.remove(appTempPath);
   fm.writeString(appTempPath,text);
   if(fm.fileExists(appPath)){
-    if(fm.fileExists(appBackupPath))fm.remove(appBackupPath);
-    fm.copy(appPath,appBackupPath);
+    if(fm.fileExists(appBackupTempPath))fm.remove(appBackupTempPath);
+    fm.copy(appPath,appBackupTempPath);
+    fm.move(appBackupTempPath,appBackupPath);
   }
   fm.move(appTempPath,appPath);
 }
