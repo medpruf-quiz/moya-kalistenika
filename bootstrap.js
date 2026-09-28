@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.5.0. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.5.1. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.5.0";
+const BOOTSTRAP_VERSION = "1.5.1";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -312,7 +312,9 @@ if(action==="restoreBackup"){
 
 let appHTML;
 try{
+  console.log("MK bootstrap "+BOOTSTRAP_VERSION+": loading local app");
   appHTML=await loadLocalApp(dataSchema(state));
+  console.log("MK bootstrap: app package "+(appVersionFromHTML(appHTML)||"unknown")+" ready");
 }catch(e){
   const a=new Alert();
   a.title="Моя калистеника";
@@ -389,6 +391,7 @@ async function scheduleRestNotification(seconds){
 web.shouldAllowRequest=(req)=>{
   const url=req.url||"";
   if(!url.startsWith("https://scriptable.local/")){
+    if(url.startsWith("https://moya-kalistenika.local/"))return true;
     if(/^https?:\/\//i.test(url))return false;
     return true;
   }
@@ -435,15 +438,20 @@ web.shouldAllowRequest=(req)=>{
   return false;
 };
 
-async function loadAndPreflight(appText){
+async function loadAppIntoWebView(appText){
+  console.log("MK bootstrap: loading WebView");
   await web.loadHTML(injectApp(appText),"https://moya-kalistenika.local/");
-  if(compareVersions(appVersionFromHTML(appText)||"0.0.0","2.5.0")<0)return true;
-  try{return !!(await web.evaluateJavaScript("Boolean(window.__MK_READY__)",false));}
-  catch(e){console.log("App preflight failed: "+e);return false;}
+  console.log("MK bootstrap: WebView loaded");
 }
 
-let ready=await loadAndPreflight(appHTML);
-if(!ready){
+let loaded=false;
+try{
+  await loadAppIntoWebView(appHTML);
+  loaded=true;
+}catch(e){
+  console.log("App load failed: "+e);
+}
+if(!loaded){
   let rollback=null;
   if(fm.fileExists(appBackupPath)){
     const candidate=fm.readString(appBackupPath);
@@ -453,24 +461,26 @@ if(!ready){
     try{
       writeAppPrimary(rollback);
       appHTML=rollback;
-      updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
+      updateNotice="Новая версия не открылась. Восстановлена предыдущая совместимая версия.";
       updateTone="warn";
-      ready=await loadAndPreflight(appHTML);
+      await loadAppIntoWebView(appHTML);
+      loaded=true;
     }catch(e){
-      console.log("App rollback write failed: "+e);
-      ready=false;
+      console.log("App rollback load failed: "+e);
     }
   }
 }
-if(!ready){
+if(!loaded){
   const a=new Alert();
   a.title="Не удалось открыть приложение";
-  a.message="Код приложения не прошёл проверку запуска. Данные сохранены. Попробуй позже проверить обновление или восстановить совместимую версию кода.";
+  a.message="Локальный интерфейс не загрузился. Данные сохранены. Попробуй снова после проверки bootstrap.js.";
   a.addAction("OK");
   await a.presentAlert();
   Script.complete();
   return;
 }
 
+console.log("MK bootstrap: presenting WebView");
 await web.present(true);
+console.log("MK bootstrap: WebView closed");
 Script.complete();
