@@ -429,6 +429,7 @@ function normalizeState(raw){
   return s;
 }
 let recoveredFromLocal=false;
+let nativeNormalizationNeeded=false;
 function readLocalState(){
   try{
     if(window.__BOOTSTRAP_META__?.resetLocalCache){
@@ -441,7 +442,9 @@ function readLocalState(){
   }catch{return null;}
 }
 function loadInitialState(){
-  const nativeState=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):null;
+  const rawNative=window.__INITIAL_STATE__&&typeof window.__INITIAL_STATE__==="object"?window.__INITIAL_STATE__:null;
+  const nativeState=rawNative?normalizeState(rawNative):null;
+  nativeNormalizationNeeded=!!rawNative&&JSON.stringify(nativeState)!==JSON.stringify(rawNative);
   const localState=readLocalState();
   const sameRevisionConflict=localState&&nativeState&&localState.revision===nativeState.revision&&JSON.stringify(localState)!==JSON.stringify(nativeState);
   if(localState&&(!nativeState||localState.revision>nativeState.revision||sameRevisionConflict)){
@@ -755,7 +758,7 @@ if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable
 timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
 if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}else{timerEndAt=null;state.settings.restEndAt=null;}
 window.__MK_READY__=true;
-if(recoveredFromLocal||Number(window.__INITIAL_STATE__?.schema||0)<5)save({immediate:true,forceFull:true});
+if(recoveredFromLocal||nativeNormalizationNeeded||Number(window.__INITIAL_STATE__?.schema||0)<5)save({immediate:true,forceFull:true});
 </script>
 </body>
 </html>
