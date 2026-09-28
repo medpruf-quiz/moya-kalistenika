@@ -260,6 +260,25 @@ function cleanupStateChunks(){
   Object.keys(incomingState).forEach(k=>{if(now-(incomingState[k].created||0)>60000)delete incomingState[k];});
 }
 
+const REST_TIMER_NOTIFICATION_ID="moya-kalistenika-rest-timer";
+function cancelRestNotification(){
+  Notification.removePending([REST_TIMER_NOTIFICATION_ID]).catch(e=>console.log("Rest notification cancel failed: "+e));
+}
+function scheduleRestNotification(seconds){
+  const sec=Number(seconds);
+  if(!Number.isFinite(sec)||sec<10||sec>3600)return;
+  cancelRestNotification();
+  const n=new Notification();
+  n.identifier=REST_TIMER_NOTIFICATION_ID;
+  n.title="Моя калистеника";
+  n.body="Отдых закончен — можно готовиться к следующему подходу.";
+  n.sound="complete";
+  n.threadIdentifier="moya-kalistenika";
+  n.openURL=URLScheme.forRunningScript();
+  n.setTriggerDate(new Date(Date.now()+sec*1000));
+  n.schedule().catch(e=>console.log("Rest notification schedule failed: "+e));
+}
+
 web.shouldAllowRequest=(req)=>{
   const url=req.url||"";
   if(!url.startsWith("https://scriptable.local/")){
@@ -303,6 +322,10 @@ web.shouldAllowRequest=(req)=>{
     }else if(url.includes("/action/purge-data-backup")){
       if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
       if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
+    }else if(url.includes("/action/rest-timer-start")){
+      scheduleRestNotification(Number(getParam(url,"seconds")));
+    }else if(url.includes("/action/rest-timer-stop")){
+      cancelRestNotification();
     }
     cleanupStateChunks();
   }catch(e){
