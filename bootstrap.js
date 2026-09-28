@@ -450,11 +450,16 @@ if(!ready){
     if(appCompatibleWithData(candidate,dataSchema(state)))rollback=candidate;
   }
   if(rollback){
-    writeAppPrimary(rollback);
-    appHTML=rollback;
-    updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
-    updateTone="warn";
-    ready=await loadAndPreflight(appHTML);
+    try{
+      writeAppPrimary(rollback);
+      appHTML=rollback;
+      updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
+      updateTone="warn";
+      ready=await loadAndPreflight(appHTML);
+    }catch(e){
+      console.log("App rollback write failed: "+e);
+      ready=false;
+    }
   }
 }
 if(!ready){
