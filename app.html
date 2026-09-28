@@ -443,7 +443,8 @@ function readLocalState(){
 function loadInitialState(){
   const nativeState=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):null;
   const localState=readLocalState();
-  if(localState&&(!nativeState||localState.revision>nativeState.revision)){
+  const sameRevisionConflict=localState&&nativeState&&localState.revision===nativeState.revision&&JSON.stringify(localState)!==JSON.stringify(nativeState);
+  if(localState&&(!nativeState||localState.revision>nativeState.revision||sameRevisionConflict)){
     recoveredFromLocal=true;
     return localState;
   }
