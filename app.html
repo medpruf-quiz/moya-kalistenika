@@ -436,6 +436,7 @@ function readLocalState(){
       return null;
     }
     const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+    if(raw&&Number(raw.schema||2)>5)return null;
     return raw&&typeof raw==="object"?normalizeState(raw):null;
   }catch{return null;}
 }
@@ -733,7 +734,7 @@ document.getElementById("restoreBtn").addEventListener("click",e=>{
       clearInterval(timerInterval);
       timerInterval=setInterval(tickTimer,250);
       tickTimer();
-      nativeAction("rest-timer-start",{seconds:Math.max(10,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});
+      nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});
     }
     save({immediate:true,forceFull:true});
     document.getElementById("restoreText").value="";
