@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.5.0" data-schema="5">
+<html lang="ru" data-mk-app="true" data-app-version="2.5.1" data-schema="5">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -183,7 +183,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
       <section class="panel danger-zone">
         <span class="overline">СБРОС И УДАЛЕНИЕ</span>
         <h2>Можно очистить всё или только нужный раздел</h2>
-        <p>Для защиты от случайного нажатия опасную кнопку нужно нажать дважды. Полный сброс удаляет историю, питание, измерения и настройки профиля.</p>
+        <p>Для защиты от случайного нажатия опасную кнопку нужно нажать дважды. Полный сброс удаляет историю, питание, измерения и незавершённую тренировку; текущий профиль остаётся локальной базой для нового старта.</p>
         <div class="reset-list">
           <button class="btn btn-soft btn-block" id="resetActiveSessionBtn">Удалить незавершённую тренировку</button>
           <button class="btn btn-soft btn-block" id="resetSessionsBtn">Очистить историю тренировок</button>
@@ -214,7 +214,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.0";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.1";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -442,7 +442,23 @@ let saveTimer=null,persistChain=Promise.resolve();
 let timerInterval=null,timerEndAt=null,timerDuration=state.settings.restSeconds||90;
 const dangerTimers=new WeakMap();
 
-function persistLocal(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}catch{}}
+let localCacheWarningShown=false;
+function persistLocal(){
+  try{
+    const text=JSON.stringify(state);
+    localStorage.setItem(STORAGE_KEY,text);
+    const ok=localStorage.getItem(STORAGE_KEY)===text;
+    if(!ok)throw new Error("localStorage read-back mismatch");
+    return true;
+  }catch(e){
+    console.log("Local recovery cache error: "+e);
+    if(!localCacheWarningShown&&typeof toast==="function"){
+      localCacheWarningShown=true;
+      toast("Резервное локальное сохранение недоступно");
+    }
+    return false;
+  }
+}
 function toBase64Utf8(str){return btoa(unescape(encodeURIComponent(str)));}
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
 async function nativePersist(payload,mode="patch"){
@@ -474,9 +490,9 @@ function save({immediate=false,forceFull=false}={}){
   state.version=APP_VERSION;
   state.schema=5;
   state.revision=Math.max(Math.max(0,Math.floor(safeNumber(state.revision,0)))+1,Date.now());
-  persistLocal();
+  const localOk=persistLocal();
   clearTimeout(saveTimer);
-  if(immediate)return flushPersist(forceFull);
+  if(immediate||!localOk)return flushPersist(forceFull||!localOk);
   saveTimer=setTimeout(()=>{flushPersist(forceFull);},180);
   return persistChain;
 }
