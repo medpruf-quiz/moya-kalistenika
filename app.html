@@ -478,9 +478,10 @@ function save({immediate=false,forceFull=false}={}){
   saveTimer=setTimeout(()=>{flushPersist(forceFull);},180);
   return persistChain;
 }
-async function nativeAction(action){
+async function nativeAction(action,params={}){
   if(!window.__SCRIPTABLE_MODE__)return false;
-  await bridgeImage(`https://scriptable.local/action/${action}?t=${Date.now()}`);
+  const query=Object.entries({t:Date.now(),...params}).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+  await bridgeImage(`https://scriptable.local/action/${action}?${query}`);
   return true;
 }
 
@@ -612,9 +613,9 @@ document.getElementById("restartWorkoutBtn").addEventListener("click",e=>armDang
 
 function updateRestButtons(){document.querySelectorAll("[data-rest]").forEach(b=>b.classList.toggle("active",Number(b.dataset.rest)===timerDuration));}
 function setRestDuration(sec){timerDuration=sec;state.settings.restSeconds=sec;pauseTimer();save();updateRestButtons();updateTimerDisplay();}
-function startTimer(){timerEndAt=Date.now()+timerDuration*1000;clearInterval(timerInterval);timerInterval=setInterval(tickTimer,250);tickTimer();}
-function pauseTimer(){if(timerInterval){clearInterval(timerInterval);timerInterval=null;}timerEndAt=null;const st=document.getElementById("timerState"),tg=document.getElementById("timerToggle");if(st)st.textContent="готов";if(tg)tg.textContent="Старт";updateTimerDisplay();}
-function tickTimer(){if(!timerEndAt)return;const left=Math.max(0,Math.ceil((timerEndAt-Date.now())/1000));updateTimerDisplay(left);document.getElementById("timerState").textContent="идёт";document.getElementById("timerToggle").textContent="Стоп";if(left<=0){clearInterval(timerInterval);timerInterval=null;timerEndAt=null;document.getElementById("timerState").textContent="готово";document.getElementById("timerToggle").textContent="Старт";beep();toast("Отдых закончен");}}
+function startTimer(){timerEndAt=Date.now()+timerDuration*1000;clearInterval(timerInterval);timerInterval=setInterval(tickTimer,250);nativeAction("rest-timer-start",{seconds:timerDuration}).catch(()=>{});tickTimer();}
+function pauseTimer(){if(timerInterval){clearInterval(timerInterval);timerInterval=null;}timerEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});const st=document.getElementById("timerState"),tg=document.getElementById("timerToggle");if(st)st.textContent="готов";if(tg)tg.textContent="Старт";updateTimerDisplay();}
+function tickTimer(){if(!timerEndAt)return;const left=Math.max(0,Math.ceil((timerEndAt-Date.now())/1000));updateTimerDisplay(left);document.getElementById("timerState").textContent="идёт";document.getElementById("timerToggle").textContent="Стоп";if(left<=0){clearInterval(timerInterval);timerInterval=null;timerEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});document.getElementById("timerState").textContent="готово";document.getElementById("timerToggle").textContent="Старт";beep();toast("Отдых закончен");}}
 function updateTimerDisplay(left=timerDuration){const el=document.getElementById("timerDisplay");if(!el)return;const m=Math.floor(left/60),s=left%60;el.textContent=`${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;}
 function beep(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C(),o=c.createOscillator(),g=c.createGain();o.frequency.value=720;g.gain.setValueAtTime(.05,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.22);o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.22);}catch{}}
 document.querySelectorAll("[data-rest]").forEach(b=>b.addEventListener("click",()=>setRestDuration(Number(b.dataset.rest))));document.getElementById("timerToggle").addEventListener("click",()=>timerEndAt?pauseTimer():startTimer());document.addEventListener("visibilitychange",()=>{if(!document.hidden&&timerEndAt)tickTimer();});
