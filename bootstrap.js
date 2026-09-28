@@ -62,6 +62,17 @@ function stateRevision(obj){
   const n=Number(obj?.revision);
   return Number.isFinite(n)&&n>=0?n:0;
 }
+function stateFingerprint(value){
+  const text=typeof value==="string"?value:JSON.stringify(value);
+  let h=2166136261;
+  for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}
+  return (h>>>0).toString(16).padStart(8,"0");
+}
+function matchesExpectedState(currentState,expectedRevision,expectedHash){
+  if(expectedRevision&&stateRevision(currentState)<expectedRevision)return false;
+  if(expectedHash&&stateFingerprint(currentState)!==expectedHash)return false;
+  return true;
+}
 function newestState(a,b){
   if(!a)return b||null;
   if(!b)return a;
@@ -282,8 +293,8 @@ if(action==="restoreBackup"){
   }catch(e){console.log("Backup restore failed: "+e);}
 }else if(action==="copyData"){
   try{
-    const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0;
-    if(expectedRevision&&stateRevision(state)<expectedRevision)throw new Error("Latest state revision was not persisted");
+    const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0,expectedHash=args?.queryParameters?.expectedHash||"";
+    if(!matchesExpectedState(state,expectedRevision,expectedHash))throw new Error("Latest state was not persisted");
     const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
     Pasteboard.copyString(text);
     const a=new Alert();a.title="Готово";a.message="Текущие данные скопированы в буфер обмена.";a.addAction("OK");await a.presentAlert();
@@ -316,8 +327,8 @@ if(action==="restoreBackup"){
     const a=new Alert();a.title="Сброс не выполнен";a.message="Не удалось безопасно очистить данные. Текущий файл оставлен без намеренной замены.";a.addAction("OK");await a.presentAlert();
   }
 }else if(action==="checkUpdate"){
-  const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0;
-  if(expectedRevision&&stateRevision(state)<expectedRevision){
+  const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0,expectedHash=args?.queryParameters?.expectedHash||"";
+  if(!matchesExpectedState(state,expectedRevision,expectedHash)){
     updateCheckAllowed=false;
     preUpdateNotice="Не удалось подтвердить последнее сохранение. Данные не изменены; попробуй проверить обновление ещё раз.";
     preUpdateTone="error";
