@@ -1,11 +1,11 @@
 {
-  "version": "2.4.1",
+  "version": "2.4.2",
   "schema": 4,
-  "minBootstrap": "1.0.0",
+  "minBootstrap": "1.1.0",
   "appUrl": "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/app.html",
   "publishedAt": "2026-09-28",
   "notes": [
-    "Источник кода перенесён в GitHub; обновления устанавливаются из приложения без замены data.json.",
-    "В публичном коде нет журнала тренировок, измерений, питания или резервных копий."
+    "Исправлена проверка обновлений в Scriptable: GitHub теперь проверяется нативным Request, а не из WebView.",
+    "Пользовательские данные по-прежнему остаются только на iPhone."
   ]
 }
