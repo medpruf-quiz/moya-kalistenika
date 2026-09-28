@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.5.2" data-schema="5">
+<html lang="ru" data-mk-app="true" data-app-version="2.5.3" data-schema="5">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -214,7 +214,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.2";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.3";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -465,6 +465,7 @@ function loadInitialState(){
 }
 
 let state=loadInitialState();
+let startupNativeReady=!window.__SCRIPTABLE_MODE__;
 let uiShadow=clone(state);
 const dirtyPersistKeys=new Set();
 let selectedWorkout=state.activeSession?.workout||"A";
@@ -503,7 +504,7 @@ function stateFingerprint(value){
 }
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
 async function nativePersist(payload,mode="patch"){
-  if(!window.__SCRIPTABLE_MODE__)return;
+  if(!window.__SCRIPTABLE_MODE__||!startupNativeReady)return;
   const id=Date.now().toString(36)+Math.random().toString(36).slice(2,7),b64=toBase64Utf8(payload),chunks=[];
   for(let i=0;i<b64.length;i+=3500)chunks.push(b64.slice(i,i+3500));
   await bridgeImage(`https://scriptable.local/state/begin?id=${id}&parts=${chunks.length}&mode=${encodeURIComponent(mode)}`);
@@ -543,7 +544,7 @@ function save({immediate=false,forceFull=false}={}){
   return persistChain;
 }
 async function nativeAction(action,params={}){
-  if(!window.__SCRIPTABLE_MODE__)return false;
+  if(!window.__SCRIPTABLE_MODE__||!startupNativeReady)return false;
   const query=Object.entries({t:Date.now(),...params}).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
   await bridgeImage(`https://scriptable.local/action/${action}?${query}`);
   return true;
@@ -772,18 +773,53 @@ document.getElementById("restoreBtn").addEventListener("click",e=>{
 document.getElementById("checkUpdateBtn").addEventListener("click",checkForUpdate);
 
 window.addEventListener("resize",()=>{if(document.getElementById("view-progress").classList.contains("active"))drawWeightChart();});
-function persistBeforeSuspend(){persistLocal();clearTimeout(saveTimer);flushPersist(true);}
-window.addEventListener("pagehide",persistBeforeSuspend,{capture:true});
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")persistBeforeSuspend();});
-window.addEventListener("beforeunload",persistBeforeSuspend);
-if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
-timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
-if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}else{timerEndAt=null;state.settings.restEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});}
-window.__MK_READY__=true;
-if(recoveredFromLocal||nativeNormalizationNeeded||Number(window.__INITIAL_STATE__?.schema||0)<5){
-  for(const key of PERSIST_KEYS)dirtyPersistKeys.add(key);
-  save({immediate:true,forceFull:true});
+function persistBeforeSuspend(){
+  persistLocal();
+  if(!startupNativeReady)return;
+  clearTimeout(saveTimer);
+  flushPersist(true);
 }
+window.addEventListener("pagehide",persistBeforeSuspend,{capture:true});
+document.addEventListener("visibilitychange",()=>{if(startupNativeReady&&document.visibilityState==="hidden")persistBeforeSuspend();});
+window.addEventListener("beforeunload",persistBeforeSuspend);
+
+if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
+timerDuration=state.settings.restSeconds;
+timerEndAt=safeNumber(state.settings.restEndAt,null);
+updateRestButtons();
+updateTimerDisplay();
+renderHome();
+renderWorkouts();
+renderNutrition();
+document.getElementById("metricDate").value=todayISO();
+
+const startupNeedsFullSync=recoveredFromLocal||nativeNormalizationNeeded||Number(window.__INITIAL_STATE__?.schema||0)<5;
+if(startupNeedsFullSync)for(const key of PERSIST_KEYS)dirtyPersistKeys.add(key);
+
+if(timerEndAt&&timerEndAt>Date.now()){
+  timerInterval=setInterval(tickTimer,250);
+  tickTimer();
+}else{
+  timerEndAt=null;
+  state.settings.restEndAt=null;
+}
+
+window.__MK_READY__=true;
+
+// IMPORTANT: no Scriptable bridge request is allowed while WebView.loadHTML() is still
+// waiting for the document load event. Native work starts only on a later event-loop tick.
+window.addEventListener("load",()=>{
+  setTimeout(()=>{
+    startupNativeReady=true;
+    if(timerEndAt&&timerEndAt>Date.now()){
+      nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});
+    }else{
+      nativeAction("rest-timer-stop").catch(()=>{});
+    }
+    if(startupNeedsFullSync)save({immediate:true,forceFull:true});
+    else if(dirtyPersistKeys.size)flushPersist(false);
+  },0);
+},{once:true});
 </script>
 </body>
 </html>
