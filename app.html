@@ -772,7 +772,7 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 window.addEventListener("beforeunload",persistBeforeSuspend);
 if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
 timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
-if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}else{timerEndAt=null;state.settings.restEndAt=null;}
+if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(1,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}else{timerEndAt=null;state.settings.restEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});}
 window.__MK_READY__=true;
 if(recoveredFromLocal||nativeNormalizationNeeded||Number(window.__INITIAL_STATE__?.schema||0)<5){
   for(const key of PERSIST_KEYS)dirtyPersistKeys.add(key);
