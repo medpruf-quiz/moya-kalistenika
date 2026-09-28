@@ -116,6 +116,12 @@ function validApp(text,expectedVersion=null,expectedSchema=null){
 function appCompatibleWithData(text,currentDataSchema){
   return validApp(text)&&appSchemaFromHTML(text)>=currentDataSchema;
 }
+function writeAppPrimary(text){
+  if(!validApp(text))throw new Error("Invalid app package");
+  if(fm.fileExists(appTempPath))fm.remove(appTempPath);
+  fm.writeString(appTempPath,text);
+  fm.move(appTempPath,appPath);
+}
 function writeAppAtomic(text,expectedVersion=null,expectedSchema=null){
   if(!validApp(text,expectedVersion,expectedSchema))throw new Error("Invalid app package");
   if(fm.fileExists(appTempPath))fm.remove(appTempPath);
@@ -161,7 +167,7 @@ async function loadLocalApp(currentDataSchema){
   if(fm.fileExists(appBackupPath)){
     const backup=fm.readString(appBackupPath);
     if(appCompatibleWithData(backup,currentDataSchema)){
-      fm.writeString(appPath,backup);
+      writeAppPrimary(backup);
       return backup;
     }
   }
@@ -444,7 +450,7 @@ if(!ready){
     if(appCompatibleWithData(candidate,dataSchema(state)))rollback=candidate;
   }
   if(rollback){
-    fm.writeString(appPath,rollback);
+    writeAppPrimary(rollback);
     appHTML=rollback;
     updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
     updateTone="warn";
