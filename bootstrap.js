@@ -140,6 +140,8 @@ async function runAutomaticBackupRestore(currentState){
   a.addCancelAction("Отмена");
   const choice=await a.presentAlert();
   if(choice!==0)return currentState;
+  backup.revision=Math.max(Number(currentState?.revision)||0,Number(backup?.revision)||0,Date.now())+1;
+  backup.schema=Math.max(dataSchema(backup),dataSchema(currentState));
   writeDataPrimary(JSON.stringify(backup));
   const done=new Alert();done.title="Готово";done.message="Автоматическая резервная копия восстановлена.";done.addAction("OK");await done.presentAlert();
   return backup;
