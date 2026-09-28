@@ -234,6 +234,7 @@ async function runManualUpdateCheck(currentHTML){
     const choice=await a.presentAlert();
 
     if(choice===0){
+      try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Pre-update backup snapshot failed: "+e);}
       const next=await fetchRemoteApp(meta);
       writeAppAtomic(next,meta.version,meta.schema);
       html=next;
@@ -305,8 +306,6 @@ if(action==="restoreBackup"){
     updateCheckAllowed=false;
     preUpdateNotice="Не удалось подтвердить последнее сохранение. Данные не изменены; попробуй проверить обновление ещё раз.";
     preUpdateTone="error";
-  }else{
-    try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
   }
 }else{
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
