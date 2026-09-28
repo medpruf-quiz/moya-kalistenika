@@ -191,7 +191,7 @@ async function runAutomaticBackupRestore(currentState){
   }
   const a=new Alert();
   a.title="Восстановить резервную копию?";
-  a.message="Текущие данные будут заменены состоянием на начало предыдущего запуска приложения.";
+  a.message="Текущие данные будут заменены состоянием на начало этого запуска приложения.";
   a.addAction("Восстановить");
   a.addCancelAction("Отмена");
   const choice=await a.presentAlert();
