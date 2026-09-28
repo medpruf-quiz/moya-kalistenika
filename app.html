@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.5.0">
+<html lang="ru" data-mk-app="true" data-app-version="2.5.0" data-schema="5">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -193,8 +193,9 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
         </div>
       </section>
 
-      <section class="panel"><span class="overline">РЕЗЕРВНАЯ КОПИЯ</span><h2>Данные остаются на iPhone</h2><p>Приложение автоматически хранит основной файл и предыдущую резервную копию. Перед крупными изменениями можно дополнительно скопировать данные в буфер обмена.</p>
-        <button class="btn btn-soft btn-block" id="copyBackupBtn">Скопировать резервную копию</button>
+      <section class="panel"><span class="overline">РЕЗЕРВНАЯ КОПИЯ</span><h2>Данные остаются на iPhone</h2><p>Приложение хранит основной файл и автоматическую копию состояния на начало текущего запуска. Перед крупными изменениями можно дополнительно скопировать текущие данные в буфер обмена.</p>
+        <button class="btn btn-soft btn-block" id="copyBackupBtn">Скопировать текущие данные</button>
+        <button class="btn btn-soft btn-block" id="restoreAutoBackupBtn">Восстановить автоматическую копию</button>
         <details class="restore-box"><summary>Восстановить из сохранённого текста</summary><textarea id="restoreText" rows="6" placeholder="Вставь сюда текст резервной копии"></textarea><button class="btn btn-soft btn-block" id="restoreBtn">Восстановить данные</button></details>
       </section>
       <section class="panel"><span class="overline">ОБНОВЛЕНИЯ</span><h2>Код приложения</h2><p>Проверка GitHub выполняется только по твоему нажатию. Тренировки, вес, питание и другие личные данные никуда не отправляются.</p><div class="update-status" id="updateStatus">Проверка обновлений ещё не выполнялась.</div><div class="update-actions"><button class="btn btn-soft btn-block" id="checkUpdateBtn">Проверить обновление</button></div></section>
@@ -217,7 +218,8 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
-  schema: 4,
+  schema: 5,
+  revision: 0,
   version: APP_VERSION,
   profile: { age: 30, height: 175, startWeight: 70, goalMin: 75, goalMax: 78, proteinMin: 110, proteinMax: 130 },
   metrics: [],
@@ -409,13 +411,26 @@ function normalizeState(raw){
   s.settings={...s.settings,...(raw.settings||{})};
   s.settings.restSeconds=[60,90,120,180].includes(Number(s.settings.restSeconds))?Number(s.settings.restSeconds):120;
   s.activeSession=normalizeActiveSession(raw.activeSession);
+  s.revision=Math.max(0,Math.floor(safeNumber(raw.revision,0)));
   s.version=APP_VERSION;
-  s.schema=4;
+  s.schema=5;
   return s;
 }
+let recoveredFromLocal=false;
+function readLocalState(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+    return raw&&typeof raw==="object"?normalizeState(raw):null;
+  }catch{return null;}
+}
 function loadInitialState(){
-  if(window.__INITIAL_STATE__) return normalizeState(window.__INITIAL_STATE__);
-  try{return normalizeState(JSON.parse(localStorage.getItem(STORAGE_KEY)||"null"));}catch{return clone(DEFAULT_STATE);}
+  const nativeState=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):null;
+  const localState=readLocalState();
+  if(localState&&(!nativeState||localState.revision>nativeState.revision)){
+    recoveredFromLocal=true;
+    return localState;
+  }
+  return nativeState||localState||clone(DEFAULT_STATE);
 }
 
 let state=loadInitialState();
@@ -443,7 +458,8 @@ function flushPersist(){
 }
 function save({immediate=false}={}){
   state.version=APP_VERSION;
-  state.schema=4;
+  state.schema=5;
+  state.revision=Math.max(0,Math.floor(safeNumber(state.revision,0)))+1;
   persistLocal();
   clearTimeout(saveTimer);
   if(immediate)return flushPersist();
@@ -457,18 +473,19 @@ async function nativeAction(action){
 }
 
 function setUpdateStatus(text,tone=""){const el=document.getElementById("updateStatus");if(!el)return;el.textContent=text;el.className="update-status"+(tone?` ${tone}`:"");}
-function updateRunURL(){
+function actionRunURL(action){
   const base=window.__BOOTSTRAP_META__?.runURL;
   if(!base)return null;
-  return base+(base.includes("?")?"&":"?")+"action=checkUpdate&t="+Date.now();
+  return base+(base.includes("?")?"&":"?")+"action="+encodeURIComponent(action)+"&t="+Date.now();
 }
-async function checkForUpdate(){
-  const url=updateRunURL();
-  if(!url){setUpdateStatus("Проверка обновлений доступна только в Scriptable.","error");return;}
-  setUpdateStatus("Сохраняю данные и открываю проверку…");
+async function relaunchScriptableAction(action,statusText){
+  const url=actionRunURL(action);
+  if(!url){toast("Действие доступно только в Scriptable");return;}
+  if(statusText)setUpdateStatus(statusText);
   try{await flushPersist();}catch{}
   window.location.href=url;
 }
+async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…");}
 
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),1800);}
 function armDanger(btn,normalText,onConfirm,armedText="Нажми ещё раз"){
@@ -644,7 +661,8 @@ document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
 document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{state=clone(DEFAULT_STATE);selectedWorkout="A";pauseTimer();timerDuration=state.settings.restSeconds;try{await save({immediate:true});await nativeAction("purge-data-backup");}catch{}renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
-document.getElementById("copyBackupBtn").addEventListener("click",async()=>{await flushPersist();if(await nativeAction("copy-backup")){toast("Резервная копия скопирована");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Резервная копия скопирована");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
+document.getElementById("copyBackupBtn").addEventListener("click",async()=>{await flushPersist();if(await nativeAction("copy-backup")){toast("Текущие данные скопированы");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
+document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
 document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
 
 document.getElementById("checkUpdateBtn").addEventListener("click",checkForUpdate);
@@ -656,6 +674,8 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 window.addEventListener("beforeunload",persistBeforeSuspend);
 if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
 timerDuration=state.settings.restSeconds;updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
+window.__MK_READY__=true;
+if(recoveredFromLocal)save({immediate:true});
 </script>
 </body>
 </html>
