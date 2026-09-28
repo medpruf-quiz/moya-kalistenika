@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.3.0. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.4.0. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.3.0";
+const BOOTSTRAP_VERSION = "1.4.0";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -14,6 +14,8 @@ const dataPath = fm.joinPath(dir, "data.json");
 const dataBackupPath = fm.joinPath(dir, "data.backup.json");
 const dataBackupTempPath = fm.joinPath(dir, "data.backup.tmp.json");
 const dataTempPath = fm.joinPath(dir, "data.tmp.json");
+const profileBasePath = fm.joinPath(dir, "profile.local.json");
+const profileBaseTempPath = fm.joinPath(dir, "profile.local.tmp.json");
 const appPath = fm.joinPath(dir, "app.html");
 const appBackupPath = fm.joinPath(dir, "app.backup.html");
 const appTempPath = fm.joinPath(dir, "app.tmp.html");
@@ -21,7 +23,7 @@ const appTempPath = fm.joinPath(dir, "app.tmp.html");
 const genericDefaultState = {
   schema: 5,
   revision: 0,
-  version: "2.5.0",
+  version: "2.5.1",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120, restEndAt:null }, activeSession: null
 };
@@ -56,6 +58,35 @@ function writeBackupSnapshot(text){
 function dataSchema(obj){
   const n=Number(obj?.schema);
   return Number.isInteger(n)&&n>0?n:2;
+}
+function validProfile(profile){
+  if(!profile||typeof profile!=="object")return false;
+  const keys=["age","height","startWeight","goalMin","goalMax","proteinMin","proteinMax"];
+  if(keys.some(k=>!Number.isFinite(Number(profile[k]))))return false;
+  const p=Object.fromEntries(keys.map(k=>[k,Number(profile[k])]));
+  return p.age>=16&&p.age<=80&&p.height>=120&&p.height<=230&&p.startWeight>=40&&p.startWeight<=150&&
+    p.goalMin>=40&&p.goalMin<=150&&p.goalMax>=p.goalMin&&p.goalMax<=150&&
+    p.proteinMin>=20&&p.proteinMin<=300&&p.proteinMax>=p.proteinMin&&p.proteinMax<=300;
+}
+function writeProfileBaseline(profile){
+  if(!validProfile(profile))return false;
+  const text=JSON.stringify(profile);
+  if(fm.fileExists(profileBaseTempPath))fm.remove(profileBaseTempPath);
+  fm.writeString(profileBaseTempPath,text);
+  if(fm.fileExists(profileBasePath))fm.remove(profileBasePath);
+  fm.move(profileBaseTempPath,profileBasePath);
+  return true;
+}
+function readProfileBaseline(){
+  const p=readJSON(profileBasePath);
+  return validProfile(p)?p:null;
+}
+function ensureProfileBaseline(currentState){
+  const existing=readProfileBaseline();
+  if(existing)return existing;
+  const profile=validProfile(currentState?.profile)?currentState.profile:genericDefaultState.profile;
+  writeProfileBaseline(profile);
+  return profile;
 }
 function appVersionFromHTML(text){
   const m=String(text||"").match(/data-app-version="(\d+\.\d+\.\d+)"/);
@@ -206,9 +237,13 @@ if(!state){
   state=recovered||genericDefaultState;
   try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
 }
+try{ensureProfileBaseline(state);}catch(e){console.log("Profile baseline init failed: "+e);}
 
 if(action==="restoreBackup"){
-  try{state=await runAutomaticBackupRestore(state);}catch(e){console.log("Backup restore failed: "+e);}
+  try{
+    state=await runAutomaticBackupRestore(state);
+    if(validProfile(state?.profile))writeProfileBaseline(state.profile);
+  }catch(e){console.log("Backup restore failed: "+e);}
 }else if(action==="copyData"){
   try{
     const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
@@ -222,7 +257,9 @@ if(action==="restoreBackup"){
 }else if(action==="fullReset"){
   try{
     await Notification.removePending(["moya-kalistenika-rest-timer"]).catch(()=>{});
+    const localProfile=readProfileBaseline()||(validProfile(state?.profile)?state.profile:genericDefaultState.profile);
     state=JSON.parse(JSON.stringify(genericDefaultState));
+    state.profile=JSON.parse(JSON.stringify(localProfile));
     state.revision=Date.now()+1;
     writeDataPrimary(JSON.stringify(state));
     if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
@@ -287,13 +324,14 @@ function cleanupStateChunks(){
 }
 
 const REST_TIMER_NOTIFICATION_ID="moya-kalistenika-rest-timer";
-function cancelRestNotification(){
-  Notification.removePending([REST_TIMER_NOTIFICATION_ID]).catch(e=>console.log("Rest notification cancel failed: "+e));
+async function cancelRestNotification(){
+  try{await Notification.removePending([REST_TIMER_NOTIFICATION_ID]);}
+  catch(e){console.log("Rest notification cancel failed: "+e);}
 }
-function scheduleRestNotification(seconds){
+async function scheduleRestNotification(seconds){
   const sec=Number(seconds);
   if(!Number.isFinite(sec)||sec<10||sec>3600)return;
-  cancelRestNotification();
+  await cancelRestNotification();
   const n=new Notification();
   n.identifier=REST_TIMER_NOTIFICATION_ID;
   n.title="Моя калистеника";
@@ -302,7 +340,7 @@ function scheduleRestNotification(seconds){
   n.threadIdentifier="moya-kalistenika";
   n.openURL=URLScheme.forRunningScript();
   n.setTriggerDate(new Date(Date.now()+sec*1000));
-  n.schedule().catch(e=>console.log("Rest notification schedule failed: "+e));
+  try{await n.schedule();}catch(e){console.log("Rest notification schedule failed: "+e);}
 }
 
 web.shouldAllowRequest=(req)=>{
@@ -338,14 +376,15 @@ web.shouldAllowRequest=(req)=>{
           if(nextRevision>=currentRevision){
             writeDataAtomic(JSON.stringify(next));
             state=next;
+            if(validProfile(next?.profile))writeProfileBaseline(next.profile);
           }
         }
       }
       delete incomingState[id];
     }else if(url.includes("/action/rest-timer-start")){
-      scheduleRestNotification(Number(getParam(url,"seconds")));
+      scheduleRestNotification(Number(getParam(url,"seconds"))).catch(e=>console.log("Rest timer start failed: "+e));
     }else if(url.includes("/action/rest-timer-stop")){
-      cancelRestNotification();
+      cancelRestNotification().catch(e=>console.log("Rest timer stop failed: "+e));
     }
     cleanupStateChunks();
   }catch(e){
