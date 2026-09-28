@@ -245,7 +245,7 @@ async function runManualUpdateCheck(currentHTML){
     const choice=await a.presentAlert();
 
     if(choice===0){
-      try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Pre-update backup snapshot failed: "+e);}
+      writeBackupSnapshot(JSON.stringify(state));
       const next=await fetchRemoteApp(meta);
       writeAppAtomic(next,meta.version,meta.schema);
       html=next;
