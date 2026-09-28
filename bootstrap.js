@@ -205,7 +205,8 @@ async function recoverKnownBrokenApp(currentHTML,currentDataSchema){
     if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0)throw new Error("Bootstrap too old for recovery");
     if(compareVersions(meta.version,current)<=0||meta.schema<currentDataSchema)throw new Error("No compatible recovery app available");
     const next=await fetchRemoteApp(meta);
-    writeAppAtomic(next,meta.version,meta.schema);
+    // 2.5.2 is a known-broken launch package; do not promote it to app.backup.html.
+    writeAppPrimary(next);
     console.log("MK bootstrap: recovered app to "+meta.version);
     return next;
   }catch(e){
@@ -513,7 +514,7 @@ if(!loaded){
   let rollback=null;
   if(fm.fileExists(appBackupPath)){
     const candidate=fm.readString(appBackupPath);
-    if(appCompatibleWithData(candidate,dataSchema(state)))rollback=candidate;
+    if(appVersionFromHTML(candidate)!=="2.5.2"&&appCompatibleWithData(candidate,dataSchema(state)))rollback=candidate;
   }
   if(rollback){
     try{
