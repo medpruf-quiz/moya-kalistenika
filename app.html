@@ -422,6 +422,7 @@ function normalizeState(raw){
   const restEnd=safeNumber(s.settings.restEndAt,null);
   s.settings.restEndAt=restEnd!=null&&restEnd>Date.now()&&restEnd<Date.now()+7200000?restEnd:null;
   s.activeSession=normalizeActiveSession(raw.activeSession);
+  if(!s.activeSession)s.settings.restEndAt=null;
   s.revision=Math.max(0,Math.floor(safeNumber(raw.revision,0)));
   s.version=APP_VERSION;
   s.schema=5;
