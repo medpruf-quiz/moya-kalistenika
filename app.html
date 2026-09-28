@@ -12,7 +12,7 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;min-width:0}
 html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",Inter,system-ui,sans-serif}
-html.scriptable .app-shell{padding-top:92px}
+html.scriptable .app-shell{padding-top:max(92px,calc(env(safe-area-inset-top) + 58px))}
 body{min-height:100vh;background:radial-gradient(760px 390px at 72% -5%,rgba(76,130,255,.15),transparent 62%),var(--bg);padding-bottom:calc(122px + env(safe-area-inset-bottom))}
 button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,textarea{font-size:16px}
 .app-shell{max-width:760px;margin:auto}.app-header{padding:6px 18px 14px}.brand{font-size:10px;letter-spacing:.17em;color:var(--blue);font-weight:850}.page-title{font-size:28px;font-weight:840;letter-spacing:-.035em;margin-top:3px;line-height:1.05}.content{padding:0 14px 28px}.view{display:none}.view.active{display:block}
@@ -183,7 +183,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
       <section class="panel danger-zone">
         <span class="overline">СБРОС И УДАЛЕНИЕ</span>
         <h2>Можно очистить всё или только нужный раздел</h2>
-        <p>Для защиты от случайного нажатия опасную кнопку нужно нажать дважды.</p>
+        <p>Для защиты от случайного нажатия опасную кнопку нужно нажать дважды. Полный сброс удаляет историю, питание, измерения и настройки профиля.</p>
         <div class="reset-list">
           <button class="btn btn-soft btn-block" id="resetActiveSessionBtn">Удалить незавершённую тренировку</button>
           <button class="btn btn-soft btn-block" id="resetSessionsBtn">Очистить историю тренировок</button>
@@ -672,9 +672,9 @@ document.getElementById("resetActiveSessionBtn").addEventListener("click",e=>arm
 document.getElementById("resetSessionsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю тренировок",()=>{state.sessions=[];save({immediate:true});renderSettings();renderHome();toast("История тренировок очищена");}));
 document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить все измерения",()=>{state.metrics=[];save({immediate:true});renderSettings();renderHome();toast("Измерения очищены");}));
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
-document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{state=clone(DEFAULT_STATE);selectedWorkout="A";pauseTimer();timerDuration=state.settings.restSeconds;try{await save({immediate:true,forceFull:true});await nativeAction("purge-data-backup");}catch{}renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
+document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{pauseTimer();if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("fullReset");return;}state=clone(DEFAULT_STATE);selectedWorkout="A";timerDuration=state.settings.restSeconds;await save({immediate:true,forceFull:true});renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
-document.getElementById("copyBackupBtn").addEventListener("click",async()=>{await flushPersist(true);if(await nativeAction("copy-backup")){toast("Текущие данные скопированы");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
+document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
 document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true,forceFull:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
 
