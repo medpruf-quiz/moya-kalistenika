@@ -396,16 +396,25 @@ function normalizeState(raw){
   };
   if(s.profile.goalMax<s.profile.goalMin)[s.profile.goalMin,s.profile.goalMax]=[s.profile.goalMax,s.profile.goalMin];
   if(s.profile.proteinMax<s.profile.proteinMin)[s.profile.proteinMin,s.profile.proteinMax]=[s.profile.proteinMax,s.profile.proteinMin];
-  s.metrics=Array.isArray(raw.metrics)?raw.metrics.map(x=>{
-    if(!x||!isValidISODate(x.date)||x.date>todayISO())return null;
+  const metricMap=new Map();
+  if(Array.isArray(raw.metrics))for(const x of raw.metrics){
+    if(!x||!isValidISODate(x.date)||x.date>todayISO())continue;
     const item={
       date:x.date,
       weight:boundedNumber(x.weight,40,150,null),
       waist:boundedNumber(x.waist,45,150,null),
       sleep:boundedNumber(x.sleep,0,16,null)
     };
-    return item.weight==null&&item.waist==null&&item.sleep==null?null:item;
-  }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date)):[];
+    if(item.weight==null&&item.waist==null&&item.sleep==null)continue;
+    const prev=metricMap.get(item.date)||{date:item.date,weight:null,waist:null,sleep:null};
+    metricMap.set(item.date,{
+      date:item.date,
+      weight:item.weight??prev.weight,
+      waist:item.waist??prev.waist,
+      sleep:item.sleep??prev.sleep
+    });
+  }
+  s.metrics=[...metricMap.values()].sort((a,b)=>a.date.localeCompare(b.date));
   s.sessions=Array.isArray(raw.sessions)?raw.sessions.map(normalizeHistoricalSession).filter(Boolean):[];
   s.daily=normalizeDaily(raw.daily,rawSchema);
   s.settings={...s.settings,...(raw.settings||{})};
@@ -421,6 +430,10 @@ function normalizeState(raw){
 let recoveredFromLocal=false;
 function readLocalState(){
   try{
+    if(window.__BOOTSTRAP_META__?.resetLocalCache){
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
     const raw=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
     return raw&&typeof raw==="object"?normalizeState(raw):null;
   }catch{return null;}
@@ -700,8 +713,33 @@ document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDan
 
 document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
-document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();if(Number(parsed.schema||2)>5){toast("Эта копия создана более новой версией приложения");return;}}catch(err){if(err instanceof SyntaxError||!parsed)toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{pauseTimer(false);state=normalizeState(parsed);uiShadow=clone(state);dirtyPersistKeys.clear();selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(10,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}save({immediate:true,forceFull:true});document.getElementById("restoreText").value="";renderSettings();renderHome();renderWorkouts();toast("Данные восстановлены");},"Ещё раз — восстановить");});
-
+document.getElementById("restoreBtn").addEventListener("click",e=>{
+  const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();
+  if(!text){toast("Сначала вставь сохранённый текст");return;}
+  let parsed;
+  try{parsed=JSON.parse(text);}catch{toast("Не удалось распознать резервную копию");return;}
+  if(!parsed||typeof parsed!=="object"||!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile){toast("В резервной копии не хватает обязательных данных");return;}
+  if(Number(parsed.schema||2)>5){toast("Эта копия создана более новой версией приложения");return;}
+  armDanger(btn,"Восстановить данные",()=>{
+    pauseTimer(false);
+    state=normalizeState(parsed);
+    uiShadow=clone(state);
+    dirtyPersistKeys.clear();
+    selectedWorkout=state.activeSession?.workout||"A";
+    timerDuration=state.settings.restSeconds;
+    timerEndAt=safeNumber(state.settings.restEndAt,null);
+    if(timerEndAt&&timerEndAt>Date.now()){
+      clearInterval(timerInterval);
+      timerInterval=setInterval(tickTimer,250);
+      tickTimer();
+      nativeAction("rest-timer-start",{seconds:Math.max(10,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});
+    }
+    save({immediate:true,forceFull:true});
+    document.getElementById("restoreText").value="";
+    renderSettings();renderHome();renderWorkouts();
+    toast("Данные восстановлены");
+  },"Ещё раз — восстановить");
+});
 document.getElementById("checkUpdateBtn").addEventListener("click",checkForUpdate);
 
 window.addEventListener("resize",()=>{if(document.getElementById("view-progress").classList.contains("active"))drawWeightChart();});
