@@ -434,6 +434,7 @@ function loadInitialState(){
 }
 
 let state=loadInitialState();
+let persistedShadow=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):clone(state);
 let selectedWorkout=state.activeSession?.workout||"A";
 let saveTimer=null,persistChain=Promise.resolve();
 let timerInterval=null,timerEndAt=null,timerDuration=state.settings.restSeconds||90;
@@ -442,28 +443,39 @@ const dangerTimers=new WeakMap();
 function persistLocal(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(state));}catch{}}
 function toBase64Utf8(str){return btoa(unescape(encodeURIComponent(str)));}
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
-async function nativePersist(snapshot){
+async function nativePersist(payload,mode="patch"){
   if(!window.__SCRIPTABLE_MODE__)return;
-  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,7),b64=toBase64Utf8(snapshot),chunks=[];
+  const id=Date.now().toString(36)+Math.random().toString(36).slice(2,7),b64=toBase64Utf8(payload),chunks=[];
   for(let i=0;i<b64.length;i+=3500)chunks.push(b64.slice(i,i+3500));
-  await bridgeImage(`https://scriptable.local/state/begin?id=${id}&parts=${chunks.length}`);
+  await bridgeImage(`https://scriptable.local/state/begin?id=${id}&parts=${chunks.length}&mode=${encodeURIComponent(mode)}`);
   for(let i=0;i<chunks.length;i++)await bridgeImage(`https://scriptable.local/state/chunk?id=${id}&i=${i}&d=${encodeURIComponent(chunks[i])}`);
   await bridgeImage(`https://scriptable.local/state/end?id=${id}`);
 }
-function flushPersist(){
+const PERSIST_KEYS=["schema","revision","version","profile","metrics","sessions","daily","settings","activeSession"];
+function buildStatePatch(target,base){
+  const patch={};
+  for(const key of PERSIST_KEYS){
+    if(JSON.stringify(target[key])!==JSON.stringify(base?.[key]))patch[key]=target[key];
+  }
+  return patch;
+}
+function flushPersist(forceFull=false){
   clearTimeout(saveTimer);
-  const snapshot=JSON.stringify(state);
-  persistChain=persistChain.catch(()=>{}).then(()=>nativePersist(snapshot));
+  const target=clone(state);
+  const payload=forceFull?target:buildStatePatch(target,persistedShadow);
+  if(!forceFull&&Object.keys(payload).length===0)return persistChain;
+  const text=JSON.stringify(payload),mode=forceFull?"full":"patch";
+  persistChain=persistChain.catch(()=>{}).then(async()=>{await nativePersist(text,mode);persistedShadow=target;});
   return persistChain;
 }
-function save({immediate=false}={}){
+function save({immediate=false,forceFull=false}={}){
   state.version=APP_VERSION;
   state.schema=5;
   state.revision=Math.max(Math.max(0,Math.floor(safeNumber(state.revision,0)))+1,Date.now());
   persistLocal();
   clearTimeout(saveTimer);
-  if(immediate)return flushPersist();
-  saveTimer=setTimeout(()=>{flushPersist();},180);
+  if(immediate)return flushPersist(forceFull);
+  saveTimer=setTimeout(()=>{flushPersist(forceFull);},180);
   return persistChain;
 }
 async function nativeAction(action){
@@ -482,7 +494,7 @@ async function relaunchScriptableAction(action,statusText){
   const url=actionRunURL(action);
   if(!url){toast("Действие доступно только в Scriptable");return;}
   if(statusText)setUpdateStatus(statusText);
-  try{await flushPersist();}catch{}
+  try{await flushPersist(true);}catch{}
   window.location.href=url;
 }
 async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…");}
@@ -659,23 +671,23 @@ document.getElementById("resetActiveSessionBtn").addEventListener("click",e=>arm
 document.getElementById("resetSessionsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю тренировок",()=>{state.sessions=[];save({immediate:true});renderSettings();renderHome();toast("История тренировок очищена");}));
 document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить все измерения",()=>{state.metrics=[];save({immediate:true});renderSettings();renderHome();toast("Измерения очищены");}));
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
-document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{state=clone(DEFAULT_STATE);selectedWorkout="A";pauseTimer();timerDuration=state.settings.restSeconds;try{await save({immediate:true});await nativeAction("purge-data-backup");}catch{}renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
+document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{state=clone(DEFAULT_STATE);selectedWorkout="A";pauseTimer();timerDuration=state.settings.restSeconds;try{await save({immediate:true,forceFull:true});await nativeAction("purge-data-backup");}catch{}renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
-document.getElementById("copyBackupBtn").addEventListener("click",async()=>{await flushPersist();if(await nativeAction("copy-backup")){toast("Текущие данные скопированы");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
+document.getElementById("copyBackupBtn").addEventListener("click",async()=>{await flushPersist(true);if(await nativeAction("copy-backup")){toast("Текущие данные скопированы");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
-document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
+document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true,forceFull:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
 
 document.getElementById("checkUpdateBtn").addEventListener("click",checkForUpdate);
 
 window.addEventListener("resize",()=>{if(document.getElementById("view-progress").classList.contains("active"))drawWeightChart();});
-function persistBeforeSuspend(){persistLocal();clearTimeout(saveTimer);flushPersist();}
+function persistBeforeSuspend(){persistLocal();clearTimeout(saveTimer);flushPersist(true);}
 window.addEventListener("pagehide",persistBeforeSuspend,{capture:true});
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")persistBeforeSuspend();});
 window.addEventListener("beforeunload",persistBeforeSuspend);
 if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
 timerDuration=state.settings.restSeconds;updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
 window.__MK_READY__=true;
-if(recoveredFromLocal)save({immediate:true});
+if(recoveredFromLocal||Number(window.__INITIAL_STATE__?.schema||0)<5)save({immediate:true,forceFull:true});
 </script>
 </body>
 </html>
