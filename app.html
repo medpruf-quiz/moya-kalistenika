@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.4.2">
+<html lang="ru" data-mk-app="true" data-app-version="2.4.3">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -213,7 +213,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.4.2";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.4.3";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -356,89 +356,20 @@ async function flushPersist(){
 function save({immediate=false}={}){state.version=APP_VERSION;state.schema=4;persistLocal();clearTimeout(saveTimer);if(immediate)flushPersist();else saveTimer=setTimeout(flushPersist,180);}
 async function nativeAction(action){if(!window.__SCRIPTABLE_MODE__)return false;await bridgeImage(`https://scriptable.local/action/${action}?t=${Date.now()}`);return true;}
 
-const UPDATE_MANIFEST_URL="https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/version.json";
-const UPDATE_APP_URL="https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/app.html";
 let pendingUpdateMeta=null;
-const nativeUpdateWaiters=new Map();
-
-window.__mkNativeResponse=(id,payload)=>{
-  const waiter=nativeUpdateWaiters.get(String(id));
-  if(!waiter)return;
-  clearTimeout(waiter.timer);
-  nativeUpdateWaiters.delete(String(id));
-  waiter.resolve(payload||{ok:false,error:"Пустой ответ Scriptable"});
-};
-
-function versionParts(v){return String(v||"0").split(".").map(x=>parseInt(x,10)||0).slice(0,3).concat([0,0,0]).slice(0,3);}
-function compareVersions(a,b){const aa=versionParts(a),bb=versionParts(b);for(let i=0;i<3;i++){if(aa[i]>bb[i])return 1;if(aa[i]<bb[i])return -1;}return 0;}
 function setUpdateStatus(text,tone=""){const el=document.getElementById("updateStatus");if(!el)return;el.textContent=text;el.className="update-status"+(tone?` ${tone}`:"");}
-
-function nativeUpdateRequest(action,params={}){
-  return new Promise((resolve,reject)=>{
-    const id=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
-    const timer=setTimeout(()=>{nativeUpdateWaiters.delete(id);reject(new Error("Scriptable не ответил вовремя"));},15000);
-    nativeUpdateWaiters.set(id,{resolve,reject,timer});
-    const query=Object.entries({id,...params}).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
-    bridgeImage(`https://scriptable.local/update/${action}?${query}`);
-  });
+function updateRunURL(){
+  const base=window.__BOOTSTRAP_META__?.runURL;
+  if(!base)return null;
+  return base+(base.includes("?")?"&":"?")+"action=checkUpdate&t="+Date.now();
 }
-
-async function webCheckForUpdate(){
-  const r=await fetch(`${UPDATE_MANIFEST_URL}?t=${Date.now()}`,{cache:"no-store"});
-  if(!r.ok)throw new Error(`HTTP ${r.status}`);
-  const meta=await r.json();
-  return {ok:true,status:compareVersions(meta.version,APP_VERSION)>0?"available":"current",meta};
+function checkForUpdate(){
+  const url=updateRunURL();
+  if(!url){setUpdateStatus("Проверка обновлений доступна только в Scriptable.","error");return;}
+  setUpdateStatus("Открываю проверку обновлений…");
+  window.location.href=url;
 }
-
-async function checkForUpdate(){
-  const checkBtn=document.getElementById("checkUpdateBtn"),installBtn=document.getElementById("installUpdateBtn");
-  checkBtn.disabled=true;installBtn.classList.add("hidden");pendingUpdateMeta=null;setUpdateStatus("Проверяю обновление…");
-  try{
-    const result=window.__SCRIPTABLE_MODE__?await nativeUpdateRequest("check"):await webCheckForUpdate();
-    if(!result?.ok)throw new Error(result?.error||"Не удалось проверить обновление");
-    const meta=result.meta||{};
-    if(result.status==="bootstrap"){
-      setUpdateStatus(`Доступна версия ${meta.version||"новее"}, но сначала нужно обновить загрузчик Scriptable.`,"warn");
-      return;
-    }
-    if(result.status==="current"){
-      setUpdateStatus(`У тебя актуальная версия ${APP_VERSION}.`,"good");
-      return;
-    }
-    if(result.status!=="available"||!meta.version)throw new Error("Некорректный ответ проверки");
-    pendingUpdateMeta=meta;
-    installBtn.textContent=`Установить ${meta.version}`;
-    installBtn.classList.remove("hidden");
-    const note=Array.isArray(meta.notes)&&meta.notes.length?` ${meta.notes[0]}`:"";
-    setUpdateStatus(`Доступна версия ${meta.version}.${note}`,"good");
-  }catch(e){
-    console.log("Update check error: "+e);
-    setUpdateStatus("Не удалось проверить обновление. Попробуй ещё раз позже.","error");
-  }finally{checkBtn.disabled=false;}
-}
-
-async function installPendingUpdate(){
-  const btn=document.getElementById("installUpdateBtn");
-  if(!pendingUpdateMeta)return;
-  btn.disabled=true;setUpdateStatus(`Устанавливаю ${pendingUpdateMeta.version}…`);
-  try{
-    if(window.__SCRIPTABLE_MODE__){
-      const result=await nativeUpdateRequest("install",{version:pendingUpdateMeta.version});
-      if(!result?.ok)throw new Error(result?.error||"Scriptable не установил обновление");
-    }else{
-      const url=pendingUpdateMeta.appUrl||UPDATE_APP_URL;
-      const r=await fetch(`${url}${url.includes("?")?"&":"?"}t=${Date.now()}`,{cache:"no-store"});
-      if(!r.ok)throw new Error(`HTTP ${r.status}`);
-      const text=await r.text();
-      if(text.length<20000||!text.includes('data-mk-app="true"')||!text.includes(`data-app-version="${pendingUpdateMeta.version}"`))throw new Error("Проверка файла не пройдена");
-    }
-    setUpdateStatus(`Версия ${pendingUpdateMeta.version} установлена. Закрой приложение и открой снова. Данные останутся на месте.`,"good");
-    btn.classList.add("hidden");pendingUpdateMeta=null;
-  }catch(e){
-    console.log("Update install error: "+e);
-    setUpdateStatus("Обновление не установлено. Текущая версия сохранена без изменений.","error");
-  }finally{btn.disabled=false;}
-}
+function installPendingUpdate(){checkForUpdate();}
 
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),1800);}
 function armDanger(btn,normalText,onConfirm,armedText="Нажми ещё раз"){
@@ -554,7 +485,7 @@ function renderProgress(){
 function drawWeightChart(){const c=document.getElementById("weightChart"),rect=c.getBoundingClientRect(),dpr=Math.min(window.devicePixelRatio||1,3),w=Math.max(280,rect.width),h=185;c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);const ctx=c.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);const data=[...state.metrics].filter(x=>x.weight!=null).sort((a,b)=>a.date.localeCompare(b.date)).slice(-24);ctx.strokeStyle="#223044";ctx.lineWidth=1;for(let i=1;i<=4;i++){const y=i*h/5;ctx.beginPath();ctx.moveTo(36,y);ctx.lineTo(w-8,y);ctx.stroke();}if(!data.length){ctx.fillStyle="#7f8da0";ctx.font="13px -apple-system";ctx.fillText("Добавь первое измерение",36,h/2);return;}const vals=data.map(x=>x.weight),min=Math.min(...vals,state.profile.startWeight)-.4,max=Math.max(...vals,state.profile.goalMin)+.4,range=Math.max(.5,max-min),px=i=>data.length===1?w/2:36+(w-52)*i/(data.length-1),py=v=>12+(h-34)*(1-(v-min)/range);const grad=ctx.createLinearGradient(36,0,w-16,0);grad.addColorStop(0,"#67d4ff");grad.addColorStop(1,"#8b7cff");ctx.strokeStyle=grad;ctx.lineWidth=3.5;ctx.lineCap="round";ctx.lineJoin="round";ctx.beginPath();data.forEach((x,i)=>i?ctx.lineTo(px(i),py(x.weight)):ctx.moveTo(px(i),py(x.weight)));ctx.stroke();data.forEach((x,i)=>{ctx.fillStyle="#f5f9ff";ctx.beginPath();ctx.arc(px(i),py(x.weight),3.5,0,Math.PI*2);ctx.fill();});ctx.fillStyle="#728198";ctx.font="10px -apple-system";ctx.fillText(`${max.toFixed(1)} кг`,2,13);ctx.fillText(`${min.toFixed(1)} кг`,2,h-5);}
 function renderWeightTrend(){const data=[...state.metrics].filter(x=>x.weight!=null).sort((a,b)=>a.date.localeCompare(b.date)),el=document.getElementById("weightTrend");if(data.length<2){el.textContent="Нужно хотя бы два измерения для тренда.";return;}const windowed=data.slice(-4),first=windowed[0],last=windowed[windowed.length-1],days=Math.max(1,(parseLocalDate(last.date)-parseLocalDate(first.date))/86400000),rate=(last.weight-first.weight)/(days/7);let note="примерно в нужном диапазоне";if(rate<.07)note="медленнее ориентира";if(rate>.25)note="быстрее ориентира";el.textContent=`Последний вес ${last.weight.toFixed(1)} кг · краткосрочно ${rate>=0?"+":""}${rate.toFixed(2)} кг/нед — ${note}.`;}
 
-function renderSettings(){const p=state.profile;for(const[id,key]of[["profileAge","age"],["profileHeight","height"],["profileStartWeight","startWeight"],["profileGoalMin","goalMin"],["profileGoalMax","goalMax"],["profileProteinMin","proteinMin"],["profileProteinMax","proteinMax"]])document.getElementById(id).value=p[key];const [lo,hi]=easyRunRange(),[waterLo,waterHi]=preWorkoutWaterRange();const run=document.getElementById("physRunZone"),water=document.getElementById("physWaterBefore");if(run)run.textContent=`${lo}–${hi} уд/мин`;if(water)water.textContent=`≈ ${waterLo}–${waterHi} мл`;document.getElementById("appVersion").textContent=APP_VERSION;document.getElementById("resetActiveSessionBtn").classList.toggle("hidden",!state.activeSession);}
+function renderSettings(){const p=state.profile;for(const[id,key]of[["profileAge","age"],["profileHeight","height"],["profileStartWeight","startWeight"],["profileGoalMin","goalMin"],["profileGoalMax","goalMax"],["profileProteinMin","proteinMin"],["profileProteinMax","proteinMax"]])document.getElementById(id).value=p[key];const [lo,hi]=easyRunRange(),[waterLo,waterHi]=preWorkoutWaterRange();const run=document.getElementById("physRunZone"),water=document.getElementById("physWaterBefore");if(run)run.textContent=`${lo}–${hi} уд/мин`;if(water)water.textContent=`≈ ${waterLo}–${waterHi} мл`;document.getElementById("appVersion").textContent=APP_VERSION;const notice=window.__BOOTSTRAP_META__?.updateNotice;if(notice)setUpdateStatus(notice,window.__BOOTSTRAP_META__?.updateTone||"good");document.getElementById("resetActiveSessionBtn").classList.toggle("hidden",!state.activeSession);}
 document.getElementById("saveProfileBtn").addEventListener("click",()=>{const next={age:inputNumber("profileAge"),height:inputNumber("profileHeight"),startWeight:inputNumber("profileStartWeight"),goalMin:inputNumber("profileGoalMin"),goalMax:inputNumber("profileGoalMax"),proteinMin:inputNumber("profileProteinMin"),proteinMax:inputNumber("profileProteinMax")};if(Object.values(next).some(v=>v==null)||next.goalMax<next.goalMin||next.proteinMax<next.proteinMin||next.age<16||next.age>80||next.height<120||next.height>230){toast("Проверь значения профиля");return;}state.profile=next;save({immediate:true});renderHome();toast("Профиль сохранён");});
 
 document.getElementById("resetActiveSessionBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Удалить незавершённую тренировку",()=>{state.activeSession=null;pauseTimer();selectedWorkout="A";save({immediate:true});renderSettings();renderHome();toast("Незавершённая тренировка удалена");}));
