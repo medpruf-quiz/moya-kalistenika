@@ -60,7 +60,7 @@ function dataSchema(obj){
 }
 function stateRevision(obj){
   const n=Number(obj?.revision);
-  return Number.isFinite(n)&&n>=0?n:0;
+  return Number.isSafeInteger(n)&&n>=0?n:0;
 }
 function stateFingerprint(value){
   const text=typeof value==="string"?value:JSON.stringify(value);
