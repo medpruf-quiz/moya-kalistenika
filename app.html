@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.5.1" data-schema="5">
+<html lang="ru" data-mk-app="true" data-app-version="2.5.2" data-schema="5">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -214,7 +214,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.1";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.2";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -318,7 +318,7 @@ function normalizeDaily(rawDaily, rawSchema){
   const out={};
   if(!rawDaily || typeof rawDaily!=="object") return out;
   for(const [date,raw] of Object.entries(rawDaily)){
-    if(!isValidISODate(date)||!raw||typeof raw!=="object")continue;
+    if(!isValidISODate(date)||date>todayISO()||!raw||typeof raw!=="object")continue;
     const manualProtein=clamp(safeNumber(raw.manualProtein,safeNumber(raw.protein,0))||0,0,500);
     const mealDone={},mealChoices={};
     for(const type of Object.keys(MEALS)){
@@ -343,7 +343,7 @@ function normalizeHistoricalExercise(raw,workout,index){
   };
 }
 function normalizeHistoricalSession(raw,index){
-  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||!Array.isArray(raw.exercises))return null;
+  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||raw.date>todayISO()||!Array.isArray(raw.exercises))return null;
   const created=safeNumber(raw.created,parseLocalDate(raw.date).getTime());
   const exercises=raw.exercises.map((ex,i)=>normalizeHistoricalExercise(ex,raw.workout,i)).filter(Boolean);
   if(!exercises.length)return null;
@@ -358,7 +358,7 @@ function normalizeHistoricalSession(raw,index){
   };
 }
 function normalizeActiveSession(raw){
-  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||!Array.isArray(raw.exercises))return null;
+  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||raw.date>todayISO()||!Array.isArray(raw.exercises))return null;
   const defs=WORKOUTS[raw.workout].exercises;
   const oldExercises=raw.exercises;
   const exercises=defs.map((def,ei)=>{
@@ -397,7 +397,7 @@ function normalizeState(raw){
   if(s.profile.goalMax<s.profile.goalMin)[s.profile.goalMin,s.profile.goalMax]=[s.profile.goalMax,s.profile.goalMin];
   if(s.profile.proteinMax<s.profile.proteinMin)[s.profile.proteinMin,s.profile.proteinMax]=[s.profile.proteinMax,s.profile.proteinMin];
   s.metrics=Array.isArray(raw.metrics)?raw.metrics.map(x=>{
-    if(!x||!isValidISODate(x.date))return null;
+    if(!x||!isValidISODate(x.date)||x.date>todayISO())return null;
     const item={
       date:x.date,
       weight:boundedNumber(x.weight,40,150,null),
@@ -436,7 +436,8 @@ function loadInitialState(){
 }
 
 let state=loadInitialState();
-let persistedShadow=window.__INITIAL_STATE__?normalizeState(window.__INITIAL_STATE__):clone(state);
+let uiShadow=clone(state);
+const dirtyPersistKeys=new Set();
 let selectedWorkout=state.activeSession?.workout||"A";
 let saveTimer=null,persistChain=Promise.resolve();
 let timerInterval=null,timerEndAt=null,timerDuration=state.settings.restSeconds||90;
@@ -470,26 +471,31 @@ async function nativePersist(payload,mode="patch"){
   await bridgeImage(`https://scriptable.local/state/end?id=${id}`);
 }
 const PERSIST_KEYS=["schema","revision","version","profile","metrics","sessions","daily","settings","activeSession"];
-function buildStatePatch(target,base){
-  const patch={};
+function markDirtyKeys(target,base){
   for(const key of PERSIST_KEYS){
-    if(JSON.stringify(target[key])!==JSON.stringify(base?.[key]))patch[key]=target[key];
+    if(JSON.stringify(target[key])!==JSON.stringify(base?.[key]))dirtyPersistKeys.add(key);
   }
+}
+function buildDirtyPatch(target){
+  const patch={};
+  for(const key of dirtyPersistKeys)patch[key]=target[key];
   return patch;
 }
 function flushPersist(forceFull=false){
   clearTimeout(saveTimer);
   const target=clone(state);
-  const payload=forceFull?target:buildStatePatch(target,persistedShadow);
+  const payload=forceFull?target:buildDirtyPatch(target);
   if(!forceFull&&Object.keys(payload).length===0)return persistChain;
   const text=JSON.stringify(payload),mode=forceFull?"full":"patch";
-  persistChain=persistChain.catch(()=>{}).then(async()=>{await nativePersist(text,mode);persistedShadow=target;});
+  persistChain=persistChain.catch(()=>{}).then(()=>nativePersist(text,mode));
   return persistChain;
 }
 function save({immediate=false,forceFull=false}={}){
   state.version=APP_VERSION;
   state.schema=5;
   state.revision=Math.max(Math.max(0,Math.floor(safeNumber(state.revision,0)))+1,Date.now());
+  markDirtyKeys(state,uiShadow);
+  uiShadow=clone(state);
   const localOk=persistLocal();
   clearTimeout(saveTimer);
   if(immediate||!localOk)return flushPersist(forceFull||!localOk);
@@ -612,14 +618,14 @@ function progressionHint(def,prev){
   const values=prev.sets.map(x=>safeNumber(x.reps,null)).filter(x=>x!=null);
   if(def.unit){
     if(values.length===def.sets&&values.every(x=>x>=def.max))return"В прошлый раз ты уверенно дошёл до верхней границы времени. Можно немного усложнить положение и снова начать ближе к нижней границе.";
-    if(values.length&&values.every(x=>x>=def.min))return"Попробуй добавить примерно 5 секунд в одном или нескольких подходах, сохранив положение корпуса.";
+    if(values.length===def.sets&&values.every(x=>x>=def.min))return"Попробуй добавить примерно 5 секунд в одном или нескольких подходах, сохранив положение корпуса.";
     return"Повтори примерно прошлое время и сначала удерживай положение увереннее.";
   }
   const reserves=prev.sets.map(x=>safeNumber(x.rir,null));
   const completeReserve=reserves.length===def.sets&&reserves.every(x=>x!=null);
   const avg=completeReserve?reserves.reduce((a,b)=>a+b,0)/reserves.length:null;
   if(values.length===def.sets&&values.every(x=>x>=def.max)&&completeReserve&&avg>=1.5)return"В прошлый раз ты уверенно дошёл до верхней границы. Можно немного усложнить вариант и снова начать ближе к нижней границе повторов.";
-  if(values.length&&values.every(x=>x>=def.min)){
+  if(values.length===def.sets&&values.every(x=>x>=def.min)){
     if(completeReserve&&avg<1)return"Повтори примерно прошлый объём и сделай его увереннее, не сокращая технику ради лишнего повтора.";
     return"Если техника оставалась чистой и был запас, попробуй добавить 1 повтор в одном или нескольких подходах.";
   }
@@ -694,7 +700,7 @@ document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDan
 
 document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
-document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true,forceFull:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
+document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();if(Number(parsed.schema||2)>5){toast("Эта копия создана более новой версией приложения");return;}}catch(err){if(err instanceof SyntaxError||!parsed)toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{pauseTimer(false);state=normalizeState(parsed);uiShadow=clone(state);dirtyPersistKeys.clear();selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();nativeAction("rest-timer-start",{seconds:Math.max(10,Math.ceil((timerEndAt-Date.now())/1000))}).catch(()=>{});}save({immediate:true,forceFull:true});document.getElementById("restoreText").value="";renderSettings();renderHome();renderWorkouts();toast("Данные восстановлены");},"Ещё раз — восстановить");});
 
 document.getElementById("checkUpdateBtn").addEventListener("click",checkForUpdate);
 
