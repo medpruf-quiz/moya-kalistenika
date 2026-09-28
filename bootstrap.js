@@ -57,6 +57,23 @@ function dataSchema(obj){
   const n=Number(obj?.schema);
   return Number.isInteger(n)&&n>0?n:2;
 }
+function stateRevision(obj){
+  const n=Number(obj?.revision);
+  return Number.isFinite(n)&&n>=0?n:0;
+}
+function newestState(a,b){
+  if(!a)return b||null;
+  if(!b)return a;
+  return stateRevision(b)>stateRevision(a)?b:a;
+}
+function readBackupSnapshot(){
+  const primary=readJSON(dataBackupPath),temp=readJSON(dataBackupTempPath);
+  const best=newestState(primary,temp);
+  if(best&&temp&&best===temp){
+    try{fm.move(dataBackupTempPath,dataBackupPath);}catch(e){console.log("Backup temp recovery failed: "+e);}
+  }
+  return best;
+}
 function validProfile(profile){
   if(!profile||typeof profile!=="object")return false;
   const keys=["age","height","startWeight","goalMin","goalMax","proteinMin","proteinMax"];
@@ -76,6 +93,11 @@ function writeProfileBaseline(profile){
   return true;
 }
 function readProfileBaseline(){
+  const temp=readJSON(profileBaseTempPath);
+  if(validProfile(temp)){
+    try{fm.move(profileBaseTempPath,profileBasePath);}catch(e){console.log("Profile temp recovery failed: "+e);}
+    return temp;
+  }
   const p=readJSON(profileBasePath);
   return validProfile(p)?p:null;
 }
@@ -160,7 +182,7 @@ async function loadLocalApp(currentDataSchema){
   return await downloadInitialApp(currentDataSchema);
 }
 async function runAutomaticBackupRestore(currentState){
-  const backup=readJSON(dataBackupPath);
+  const backup=readBackupSnapshot();
   if(!backup){
     const a=new Alert();a.title="Резервная копия";a.message="Автоматическая резервная копия не найдена.";a.addAction("OK");await a.presentAlert();
     return currentState;
@@ -228,11 +250,13 @@ async function runManualUpdateCheck(currentHTML){
 }
 
 const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
-let state=readJSON(dataPath);
-if(!state){
-  const interrupted=readJSON(dataTempPath),recovered=readJSON(dataBackupPath);
-  state=interrupted||recovered||genericDefaultState;
+const primaryState=readJSON(dataPath),interruptedState=readJSON(dataTempPath);
+let state=newestState(primaryState,interruptedState);
+if(!state)state=readBackupSnapshot()||genericDefaultState;
+if(!primaryState||state!==primaryState){
   try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
+}else if(fm.fileExists(dataTempPath)){
+  try{fm.remove(dataTempPath);}catch(e){}
 }
 try{ensureProfileBaseline(state);}catch(e){console.log("Profile baseline init failed: "+e);}
 
