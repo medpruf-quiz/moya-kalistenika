@@ -312,7 +312,9 @@ if(action==="restoreBackup"){
 
 let appHTML;
 try{
+  console.log("MK bootstrap "+BOOTSTRAP_VERSION+": loading local app");
   appHTML=await loadLocalApp(dataSchema(state));
+  console.log("MK bootstrap: app package "+(appVersionFromHTML(appHTML)||"unknown")+" ready");
 }catch(e){
   const a=new Alert();
   a.title="Моя калистеника";
@@ -437,7 +439,9 @@ web.shouldAllowRequest=(req)=>{
 };
 
 async function loadAppIntoWebView(appText){
+  console.log("MK bootstrap: loading WebView");
   await web.loadHTML(injectApp(appText),"https://moya-kalistenika.local/");
+  console.log("MK bootstrap: WebView loaded");
 }
 
 let loaded=false;
@@ -476,5 +480,7 @@ if(!loaded){
   return;
 }
 
+console.log("MK bootstrap: presenting WebView");
 await web.present(true);
+console.log("MK bootstrap: WebView closed");
 Script.complete();
