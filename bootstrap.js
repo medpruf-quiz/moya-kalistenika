@@ -206,6 +206,21 @@ if(!state){
 
 if(action==="restoreBackup"){
   try{state=await runAutomaticBackupRestore(state);}catch(e){console.log("Backup restore failed: "+e);}
+}else if(action==="copyData"){
+  try{
+    const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
+    Pasteboard.copyString(text);
+    const a=new Alert();a.title="Готово";a.message="Текущие данные скопированы в буфер обмена.";a.addAction("OK");await a.presentAlert();
+  }catch(e){console.log("Copy data failed: "+e);}
+  try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
+}else if(action==="fullReset"){
+  try{
+    state=JSON.parse(JSON.stringify(genericDefaultState));
+    state.revision=Date.now()+1;
+    writeDataPrimary(JSON.stringify(state));
+    if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
+    if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
+  }catch(e){console.log("Full reset failed: "+e);}
 }else{
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }
@@ -316,12 +331,6 @@ web.shouldAllowRequest=(req)=>{
         }
       }
       delete incomingState[id];
-    }else if(url.includes("/action/copy-backup")){
-      const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
-      Pasteboard.copyString(text);
-    }else if(url.includes("/action/purge-data-backup")){
-      if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
-      if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
     }else if(url.includes("/action/rest-timer-start")){
       scheduleRestNotification(Number(getParam(url,"seconds")));
     }else if(url.includes("/action/rest-timer-stop")){
