@@ -459,7 +459,7 @@ function flushPersist(){
 function save({immediate=false}={}){
   state.version=APP_VERSION;
   state.schema=5;
-  state.revision=Math.max(0,Math.floor(safeNumber(state.revision,0)))+1;
+  state.revision=Math.max(Math.max(0,Math.floor(safeNumber(state.revision,0)))+1,Date.now());
   persistLocal();
   clearTimeout(saveTimer);
   if(immediate)return flushPersist();
