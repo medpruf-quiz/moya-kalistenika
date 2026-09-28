@@ -14,8 +14,6 @@ const dataPath = fm.joinPath(dir, "data.json");
 const dataBackupPath = fm.joinPath(dir, "data.backup.json");
 const dataBackupTempPath = fm.joinPath(dir, "data.backup.tmp.json");
 const dataTempPath = fm.joinPath(dir, "data.tmp.json");
-const profileBasePath = fm.joinPath(dir, "profile.local.json");
-const profileBaseTempPath = fm.joinPath(dir, "profile.local.tmp.json");
 const appPath = fm.joinPath(dir, "app.html");
 const appBackupPath = fm.joinPath(dir, "app.backup.html");
 const appBackupTempPath = fm.joinPath(dir, "app.backup.tmp.html");
@@ -94,31 +92,6 @@ function validProfile(profile){
   return p.age>=16&&p.age<=80&&p.height>=120&&p.height<=230&&p.startWeight>=40&&p.startWeight<=150&&
     p.goalMin>=p.startWeight&&p.goalMin>=40&&p.goalMin<=150&&p.goalMax>=p.goalMin&&p.goalMax<=150&&
     p.proteinMin>=20&&p.proteinMin<=300&&p.proteinMax>=p.proteinMin&&p.proteinMax<=300;
-}
-function writeProfileBaseline(profile){
-  if(!validProfile(profile))return false;
-  const text=JSON.stringify(profile);
-  if(fm.fileExists(profileBasePath)&&fm.readString(profileBasePath)===text)return true;
-  if(fm.fileExists(profileBaseTempPath))fm.remove(profileBaseTempPath);
-  fm.writeString(profileBaseTempPath,text);
-  fm.move(profileBaseTempPath,profileBasePath);
-  return true;
-}
-function readProfileBaseline(){
-  const temp=readJSON(profileBaseTempPath);
-  if(validProfile(temp)){
-    try{fm.move(profileBaseTempPath,profileBasePath);}catch(e){console.log("Profile temp recovery failed: "+e);}
-    return temp;
-  }
-  const p=readJSON(profileBasePath);
-  return validProfile(p)?p:null;
-}
-function ensureProfileBaseline(currentState){
-  const existing=readProfileBaseline();
-  if(existing)return existing;
-  const profile=validProfile(currentState?.profile)?currentState.profile:genericDefaultState.profile;
-  writeProfileBaseline(profile);
-  return profile;
 }
 function appVersionFromHTML(text){
   const m=String(text||"").match(/data-app-version="(\d+\.\d+\.\d+)"/);
@@ -272,8 +245,6 @@ if(!state){
     state=recovered;
   }else{
     state=JSON.parse(JSON.stringify(genericDefaultState));
-    const localProfile=readProfileBaseline();
-    if(localProfile)state.profile=JSON.parse(JSON.stringify(localProfile));
   }
 }
 if(!primaryState||state!==primaryState){
@@ -281,16 +252,13 @@ if(!primaryState||state!==primaryState){
 }else if(fm.fileExists(dataTempPath)){
   try{fm.remove(dataTempPath);}catch(e){}
 }
-try{ensureProfileBaseline(state);}catch(e){console.log("Profile baseline init failed: "+e);}
 let updateCheckAllowed=true;
 let preUpdateNotice=null;
 let preUpdateTone="";
 
 if(action==="restoreBackup"){
-  try{
-    state=await runAutomaticBackupRestore(state);
-    if(validProfile(state?.profile))writeProfileBaseline(state.profile);
-  }catch(e){console.log("Backup restore failed: "+e);}
+  try{state=await runAutomaticBackupRestore(state);}
+  catch(e){console.log("Backup restore failed: "+e);}
 }else if(action==="copyData"){
   try{
     const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0,expectedHash=args?.queryParameters?.expectedHash||"";
@@ -307,8 +275,7 @@ if(action==="restoreBackup"){
     await Notification.removePending(["moya-kalistenika-rest-timer"]).catch(()=>{});
     let requestedProfile=null;
     try{requestedProfile=JSON.parse(args?.queryParameters?.profile||"null");}catch(e){}
-    const localProfile=validProfile(requestedProfile)?requestedProfile:(readProfileBaseline()||(validProfile(state?.profile)?state.profile:genericDefaultState.profile));
-    writeProfileBaseline(localProfile);
+    const localProfile=validProfile(requestedProfile)?requestedProfile:(validProfile(state?.profile)?state.profile:genericDefaultState.profile);
     const resetState=JSON.parse(JSON.stringify(genericDefaultState));
     resetState.profile=JSON.parse(JSON.stringify(localProfile));
     resetState.revision=Date.now()+1;
@@ -444,10 +411,8 @@ web.shouldAllowRequest=(req)=>{
           }
           const currentRevision=Number(state?.revision)||0,nextRevision=Number(next?.revision)||0;
           if(nextRevision>=currentRevision){
-            const profileChanged=item.mode==="full"||Object.prototype.hasOwnProperty.call(payload,"profile");
             writeDataAtomic(JSON.stringify(next));
             state=next;
-            if(profileChanged&&validProfile(next?.profile))writeProfileBaseline(next.profile);
           }
         }
       }
