@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.2.0. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.3.0. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.2.0";
+const BOOTSTRAP_VERSION = "1.3.0";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -19,7 +19,7 @@ const appTempPath = fm.joinPath(dir, "app.tmp.html");
 
 const genericDefaultState = {
   schema: 4,
-  version: "2.4.3",
+  version: "2.5.0",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120 }, activeSession: null
 };
@@ -36,12 +36,19 @@ function readJSON(path){
   if(!fm.fileExists(path)) return null;
   try{const obj=JSON.parse(fm.readString(path));return obj&&typeof obj==="object"?obj:null;}catch(e){return null;}
 }
+function writeDataPrimary(text){
+  JSON.parse(text);
+  if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
+  fm.writeString(dataTempPath,text);
+  if(fm.fileExists(dataPath))fm.remove(dataPath);
+  fm.move(dataTempPath,dataPath);
+}
 function writeDataAtomic(text){
   JSON.parse(text);
-  if(fm.fileExists(dataTempPath)) fm.remove(dataTempPath);
+  if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
   fm.writeString(dataTempPath,text);
   if(fm.fileExists(dataPath)){
-    if(fm.fileExists(dataBackupPath)) fm.remove(dataBackupPath);
+    if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
     fm.copy(dataPath,dataBackupPath);
     fm.remove(dataPath);
   }
@@ -102,21 +109,6 @@ async function loadLocalApp(){
   }
   return await downloadInitialApp();
 }
-async function migrateUpdaterArchitecture(currentHTML){
-  const current=appVersionFromHTML(currentHTML)||"0.0.0";
-  if(compareVersions(current,"2.4.3")>=0) return currentHTML;
-  try{
-    const meta=await fetchManifest();
-    if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0) return currentHTML;
-    if(compareVersions(meta.version,current)<=0) return currentHTML;
-    const next=await fetchRemoteApp(meta);
-    writeAppAtomic(next,meta.version);
-    return next;
-  }catch(e){
-    console.log("Updater migration skipped: "+e);
-    return currentHTML;
-  }
-}
 async function runManualUpdateCheck(currentHTML){
   let notice=null,tone="good",html=currentHTML;
   try{
@@ -166,14 +158,14 @@ async function runManualUpdateCheck(currentHTML){
 
 let state=readJSON(dataPath);
 if(!state){
-  state=readJSON(dataBackupPath)||genericDefaultState;
-  try{writeDataAtomic(JSON.stringify(state));}catch(e){}
+  const recovered=readJSON(dataBackupPath);
+  state=recovered||genericDefaultState;
+  try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
 }
 
 let appHTML;
 try{
   appHTML=await loadLocalApp();
-  appHTML=await migrateUpdaterArchitecture(appHTML);
 }catch(e){
   const a=new Alert();
   a.title="Моя калистеника";
@@ -221,7 +213,10 @@ function cleanupStateChunks(){
 
 web.shouldAllowRequest=(req)=>{
   const url=req.url||"";
-  if(!url.startsWith("https://scriptable.local/")) return true;
+  if(!url.startsWith("https://scriptable.local/")){
+    if(/^https?:\/\//i.test(url))return false;
+    return true;
+  }
   try{
     if(url.includes("/state/begin")){
       const id=getParam(url,"id"),parts=Number(getParam(url,"parts"));
@@ -240,6 +235,9 @@ web.shouldAllowRequest=(req)=>{
     }else if(url.includes("/action/copy-backup")){
       const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
       Pasteboard.copyString(text);
+    }else if(url.includes("/action/purge-data-backup")){
+      if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
+      if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
     }
     cleanupStateChunks();
   }catch(e){
