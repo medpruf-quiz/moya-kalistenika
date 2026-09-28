@@ -259,6 +259,9 @@ if(!primaryState||state!==primaryState){
   try{fm.remove(dataTempPath);}catch(e){}
 }
 try{ensureProfileBaseline(state);}catch(e){console.log("Profile baseline init failed: "+e);}
+let updateCheckAllowed=true;
+let preUpdateNotice=null;
+let preUpdateTone="";
 
 if(action==="restoreBackup"){
   try{
@@ -294,6 +297,15 @@ if(action==="restoreBackup"){
     console.log("Full reset failed: "+e);
     const a=new Alert();a.title="Сброс не выполнен";a.message="Не удалось безопасно очистить данные. Текущий файл оставлен без намеренной замены.";a.addAction("OK");await a.presentAlert();
   }
+}else if(action==="checkUpdate"){
+  const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0;
+  if(expectedRevision&&stateRevision(state)<expectedRevision){
+    updateCheckAllowed=false;
+    preUpdateNotice="Не удалось подтвердить последнее сохранение. Данные не изменены; попробуй проверить обновление ещё раз.";
+    preUpdateTone="error";
+  }else{
+    try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
+  }
 }else{
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }
@@ -311,9 +323,9 @@ try{
   return;
 }
 
-let updateNotice=null;
-let updateTone="";
-if(action==="checkUpdate"){
+let updateNotice=preUpdateNotice;
+let updateTone=preUpdateTone;
+if(action==="checkUpdate"&&updateCheckAllowed){
   const result=await runManualUpdateCheck(appHTML);
   appHTML=result.html;
   updateNotice=result.notice;
