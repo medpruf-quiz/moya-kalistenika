@@ -69,6 +69,7 @@ function validProfile(profile){
 function writeProfileBaseline(profile){
   if(!validProfile(profile))return false;
   const text=JSON.stringify(profile);
+  if(fm.fileExists(profileBasePath)&&fm.readString(profileBasePath)===text)return true;
   if(fm.fileExists(profileBaseTempPath))fm.remove(profileBaseTempPath);
   fm.writeString(profileBaseTempPath,text);
   fm.move(profileBaseTempPath,profileBasePath);
