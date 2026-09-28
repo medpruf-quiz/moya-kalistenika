@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.5.1. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.5.2. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.5.1";
+const BOOTSTRAP_VERSION = "1.5.2";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -39,18 +39,30 @@ function readJSON(path){
   if(!fm.fileExists(path)) return null;
   try{const obj=JSON.parse(fm.readString(path));return obj&&typeof obj==="object"?obj:null;}catch(e){return null;}
 }
+function verifyString(path,expected,label){
+  if(!fm.fileExists(path))throw new Error(label+" was not created");
+  const actual=fm.readString(path);
+  if(actual!==expected)throw new Error(label+" verification failed");
+}
+function commitStagedString(finalPath,tempPath,text,label){
+  fm.writeString(finalPath,text);
+  verifyString(finalPath,text,label);
+  if(fm.fileExists(tempPath))fm.remove(tempPath);
+}
+function writeStagedString(finalPath,tempPath,text,label){
+  if(fm.fileExists(tempPath))fm.remove(tempPath);
+  fm.writeString(tempPath,text);
+  verifyString(tempPath,text,label+" temp");
+  commitStagedString(finalPath,tempPath,text,label);
+}
 function writeDataPrimary(text){
   JSON.parse(text);
-  if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
-  fm.writeString(dataTempPath,text);
-  fm.move(dataTempPath,dataPath);
+  writeStagedString(dataPath,dataTempPath,text,"data.json");
 }
 function writeDataAtomic(text){writeDataPrimary(text);}
 function writeBackupSnapshot(text){
   JSON.parse(text);
-  if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
-  fm.writeString(dataBackupTempPath,text);
-  fm.move(dataBackupTempPath,dataBackupPath);
+  writeStagedString(dataBackupPath,dataBackupTempPath,text,"data.backup.json");
 }
 function dataSchema(obj){
   const n=Number(obj?.schema);
@@ -80,7 +92,10 @@ function readBackupSnapshot(){
   const primary=readJSON(dataBackupPath),temp=readJSON(dataBackupTempPath);
   const best=newestState(primary,temp);
   if(best&&temp&&best===temp){
-    try{fm.move(dataBackupTempPath,dataBackupPath);}catch(e){console.log("Backup temp recovery failed: "+e);}
+    try{
+      const text=fm.readString(dataBackupTempPath);
+      commitStagedString(dataBackupPath,dataBackupTempPath,text,"data.backup.json recovery");
+    }catch(e){console.log("Backup temp recovery failed: "+e);}
   }
   return best;
 }
@@ -118,20 +133,15 @@ function appCompatibleWithData(text,currentDataSchema){
 }
 function writeAppPrimary(text){
   if(!validApp(text))throw new Error("Invalid app package");
-  if(fm.fileExists(appTempPath))fm.remove(appTempPath);
-  fm.writeString(appTempPath,text);
-  fm.move(appTempPath,appPath);
+  writeStagedString(appPath,appTempPath,text,"app.html");
 }
 function writeAppAtomic(text,expectedVersion=null,expectedSchema=null){
   if(!validApp(text,expectedVersion,expectedSchema))throw new Error("Invalid app package");
-  if(fm.fileExists(appTempPath))fm.remove(appTempPath);
-  fm.writeString(appTempPath,text);
   if(fm.fileExists(appPath)){
-    if(fm.fileExists(appBackupTempPath))fm.remove(appBackupTempPath);
-    fm.copy(appPath,appBackupTempPath);
-    fm.move(appBackupTempPath,appBackupPath);
+    const current=fm.readString(appPath);
+    if(validApp(current))writeStagedString(appBackupPath,appBackupTempPath,current,"app.backup.html");
   }
-  fm.move(appTempPath,appPath);
+  writeStagedString(appPath,appTempPath,text,"app.html");
 }
 async function requestString(url,timeout=12){
   const req=new Request(url+(url.includes("?")?"&":"?")+"t="+Date.now());
@@ -162,7 +172,19 @@ async function downloadInitialApp(currentDataSchema=2){
 async function loadLocalApp(currentDataSchema){
   if(fm.fileExists(appPath)){
     const text=fm.readString(appPath);
-    if(appCompatibleWithData(text,currentDataSchema))return text;
+    if(appCompatibleWithData(text,currentDataSchema)){
+      if(fm.fileExists(appTempPath))try{fm.remove(appTempPath);}catch(e){}
+      return text;
+    }
+  }
+  if(fm.fileExists(appTempPath)){
+    try{
+      const staged=fm.readString(appTempPath);
+      if(appCompatibleWithData(staged,currentDataSchema)){
+        commitStagedString(appPath,appTempPath,staged,"app.html recovery");
+        return staged;
+      }
+    }catch(e){console.log("App temp recovery failed: "+e);}
   }
   if(fm.fileExists(appBackupPath)){
     const backup=fm.readString(appBackupPath);
