@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.5.2. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.5.3. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.5.2";
+const BOOTSTRAP_VERSION = "1.5.3";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -22,7 +22,7 @@ const appTempPath = fm.joinPath(dir, "app.tmp.html");
 const genericDefaultState = {
   schema: 5,
   revision: 0,
-  version: "2.5.2",
+  version: "2.5.3",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120, restEndAt:null }, activeSession: null
 };
@@ -195,6 +195,41 @@ async function loadLocalApp(currentDataSchema){
   }
   return await downloadInitialApp(currentDataSchema);
 }
+async function recoverKnownBrokenApp(currentHTML,currentDataSchema){
+  const current=appVersionFromHTML(currentHTML)||"0.0.0";
+  if(current!=="2.5.2")return currentHTML;
+
+  console.log("MK bootstrap: detected known-broken app 2.5.2, starting recovery");
+  try{
+    const meta=await fetchManifest();
+    if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0)throw new Error("Bootstrap too old for recovery");
+    if(compareVersions(meta.version,current)<=0||meta.schema<currentDataSchema)throw new Error("No compatible recovery app available");
+    const next=await fetchRemoteApp(meta);
+    writeAppAtomic(next,meta.version,meta.schema);
+    console.log("MK bootstrap: recovered app to "+meta.version);
+    return next;
+  }catch(e){
+    console.log("MK bootstrap: online recovery failed: "+e);
+  }
+
+  if(fm.fileExists(appBackupPath)){
+    try{
+      const backup=fm.readString(appBackupPath);
+      if(appVersionFromHTML(backup)!=="2.5.2"&&appCompatibleWithData(backup,currentDataSchema)){
+        writeAppPrimary(backup);
+        console.log("MK bootstrap: recovered app from local backup "+appVersionFromHTML(backup));
+        return backup;
+      }
+    }catch(e){console.log("MK bootstrap: local app backup recovery failed: "+e);}
+  }
+
+  const a=new Alert();
+  a.title="Нужно восстановить приложение";
+  a.message="Локальная версия 2.5.2 известна как неисправная при запуске. Подключи интернет и запусти скрипт ещё раз — пользовательские данные не удалены.";
+  a.addAction("OK");
+  await a.presentAlert();
+  throw new Error("Known-broken app 2.5.2 could not be recovered");
+}
 async function runAutomaticBackupRestore(currentState){
   const backup=readBackupSnapshot();
   if(!backup){
@@ -336,6 +371,7 @@ let appHTML;
 try{
   console.log("MK bootstrap "+BOOTSTRAP_VERSION+": loading local app");
   appHTML=await loadLocalApp(dataSchema(state));
+  appHTML=await recoverKnownBrokenApp(appHTML,dataSchema(state));
   console.log("MK bootstrap: app package "+(appVersionFromHTML(appHTML)||"unknown")+" ready");
 }catch(e){
   const a=new Alert();
