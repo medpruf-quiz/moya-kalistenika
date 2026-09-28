@@ -276,7 +276,6 @@ if(action==="restoreBackup"){
     console.log("Copy data failed: "+e);
     const a=new Alert();a.title="Не удалось скопировать";a.message="Текущие данные не удалось поместить в буфер обмена.";a.addAction("OK");await a.presentAlert();
   }
-  try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }else if(action==="fullReset"){
   try{
     await Notification.removePending(["moya-kalistenika-rest-timer"]).catch(()=>{});
