@@ -225,7 +225,7 @@ const DEFAULT_STATE = {
   metrics: [],
   sessions: [],
   daily: {},
-  settings: { restSeconds: 120 },
+  settings: { restSeconds: 120, restEndAt: null },
   activeSession: null
 };
 
@@ -410,6 +410,8 @@ function normalizeState(raw){
   s.daily=normalizeDaily(raw.daily,rawSchema);
   s.settings={...s.settings,...(raw.settings||{})};
   s.settings.restSeconds=[60,90,120,180].includes(Number(s.settings.restSeconds))?Number(s.settings.restSeconds):120;
+  const restEnd=safeNumber(s.settings.restEndAt,null);
+  s.settings.restEndAt=restEnd!=null&&restEnd>Date.now()&&restEnd<Date.now()+7200000?restEnd:null;
   s.activeSession=normalizeActiveSession(raw.activeSession);
   s.revision=Math.max(0,Math.floor(safeNumber(raw.revision,0)));
   s.version=APP_VERSION;
@@ -612,10 +614,10 @@ document.getElementById("finishWorkoutBtn").addEventListener("click",()=>{if(!st
 document.getElementById("restartWorkoutBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Начать эту тренировку заново",()=>{if(!state.activeSession)return;const letter=state.activeSession.workout;state.activeSession=newSession(letter);pauseTimer();save({immediate:true});renderSession();toast("Тренировка начата заново");}));
 
 function updateRestButtons(){document.querySelectorAll("[data-rest]").forEach(b=>b.classList.toggle("active",Number(b.dataset.rest)===timerDuration));}
-function setRestDuration(sec){timerDuration=sec;state.settings.restSeconds=sec;pauseTimer();save();updateRestButtons();updateTimerDisplay();}
-function startTimer(){timerEndAt=Date.now()+timerDuration*1000;clearInterval(timerInterval);timerInterval=setInterval(tickTimer,250);nativeAction("rest-timer-start",{seconds:timerDuration}).catch(()=>{});tickTimer();}
-function pauseTimer(){if(timerInterval){clearInterval(timerInterval);timerInterval=null;}timerEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});const st=document.getElementById("timerState"),tg=document.getElementById("timerToggle");if(st)st.textContent="готов";if(tg)tg.textContent="Старт";updateTimerDisplay();}
-function tickTimer(){if(!timerEndAt)return;const left=Math.max(0,Math.ceil((timerEndAt-Date.now())/1000));updateTimerDisplay(left);document.getElementById("timerState").textContent="идёт";document.getElementById("timerToggle").textContent="Стоп";if(left<=0){clearInterval(timerInterval);timerInterval=null;timerEndAt=null;nativeAction("rest-timer-stop").catch(()=>{});document.getElementById("timerState").textContent="готово";document.getElementById("timerToggle").textContent="Старт";beep();toast("Отдых закончен");}}
+function setRestDuration(sec){timerDuration=sec;state.settings.restSeconds=sec;pauseTimer(false);save();updateRestButtons();updateTimerDisplay();}
+function startTimer(){timerEndAt=Date.now()+timerDuration*1000;state.settings.restEndAt=timerEndAt;save();clearInterval(timerInterval);timerInterval=setInterval(tickTimer,250);nativeAction("rest-timer-start",{seconds:timerDuration}).catch(()=>{});tickTimer();}
+function pauseTimer(persist=true){if(timerInterval){clearInterval(timerInterval);timerInterval=null;}timerEndAt=null;const hadEnd=state.settings.restEndAt!=null;state.settings.restEndAt=null;if(persist&&hadEnd)save();nativeAction("rest-timer-stop").catch(()=>{});const st=document.getElementById("timerState"),tg=document.getElementById("timerToggle");if(st)st.textContent="готов";if(tg)tg.textContent="Старт";updateTimerDisplay();}
+function tickTimer(){if(!timerEndAt)return;const left=Math.max(0,Math.ceil((timerEndAt-Date.now())/1000));updateTimerDisplay(left);document.getElementById("timerState").textContent="идёт";document.getElementById("timerToggle").textContent="Стоп";if(left<=0){clearInterval(timerInterval);timerInterval=null;timerEndAt=null;state.settings.restEndAt=null;save();nativeAction("rest-timer-stop").catch(()=>{});document.getElementById("timerState").textContent="готово";document.getElementById("timerToggle").textContent="Старт";beep();toast("Отдых закончен");}}
 function updateTimerDisplay(left=timerDuration){const el=document.getElementById("timerDisplay");if(!el)return;const m=Math.floor(left/60),s=left%60;el.textContent=`${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;}
 function beep(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C(),o=c.createOscillator(),g=c.createGain();o.frequency.value=720;g.gain.setValueAtTime(.05,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.22);o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.22);}catch{}}
 document.querySelectorAll("[data-rest]").forEach(b=>b.addEventListener("click",()=>setRestDuration(Number(b.dataset.rest))));document.getElementById("timerToggle").addEventListener("click",()=>timerEndAt?pauseTimer():startTimer());document.addEventListener("visibilitychange",()=>{if(!document.hidden&&timerEndAt)tickTimer();});
@@ -686,7 +688,8 @@ window.addEventListener("pagehide",persistBeforeSuspend,{capture:true});
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")persistBeforeSuspend();});
 window.addEventListener("beforeunload",persistBeforeSuspend);
 if(window.__SCRIPTABLE_MODE__)document.documentElement.classList.add("scriptable");
-timerDuration=state.settings.restSeconds;updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
+timerDuration=state.settings.restSeconds;timerEndAt=safeNumber(state.settings.restEndAt,null);updateRestButtons();updateTimerDisplay();renderHome();renderWorkouts();renderNutrition();document.getElementById("metricDate").value=todayISO();
+if(timerEndAt&&timerEndAt>Date.now()){timerInterval=setInterval(tickTimer,250);tickTimer();}else{timerEndAt=null;state.settings.restEndAt=null;}
 window.__MK_READY__=true;
 if(recoveredFromLocal||Number(window.__INITIAL_STATE__?.schema||0)<5)save({immediate:true,forceFull:true});
 </script>
