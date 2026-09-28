@@ -418,12 +418,20 @@ function normalizeState(raw){
   }
   s.metrics=[...metricMap.values()].sort((a,b)=>a.date.localeCompare(b.date));
   s.sessions=Array.isArray(raw.sessions)?raw.sessions.map(normalizeHistoricalSession).filter(Boolean):[];
+  const seenSessionIds=new Set();
+  s.sessions=s.sessions.map((session,index)=>{
+    let id=session.id||`session-${index}`,suffix=1;
+    while(seenSessionIds.has(id))id=`${session.id||"session"}-${index}-${suffix++}`;
+    seenSessionIds.add(id);
+    return {...session,id};
+  });
   s.daily=normalizeDaily(raw.daily,rawSchema);
   s.settings={...s.settings,...(raw.settings||{})};
   s.settings.restSeconds=[60,90,120,180].includes(Number(s.settings.restSeconds))?Number(s.settings.restSeconds):120;
   const restEnd=safeNumber(s.settings.restEndAt,null);
   s.settings.restEndAt=restEnd!=null&&restEnd>Date.now()&&restEnd<Date.now()+7200000?restEnd:null;
   s.activeSession=normalizeActiveSession(raw.activeSession);
+  if(s.activeSession&&seenSessionIds.has(s.activeSession.id))s.activeSession.id=`${s.activeSession.id}-active-${Date.now()}`;
   if(!s.activeSession)s.settings.restEndAt=null;
   s.revision=Math.max(0,Math.floor(safeNumber(raw.revision,0)));
   s.version=APP_VERSION;
