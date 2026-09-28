@@ -22,7 +22,7 @@ const genericDefaultState = {
   revision: 0,
   version: "2.5.0",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
-  metrics: [], sessions: [], daily: {}, settings: { restSeconds:120 }, activeSession: null
+  metrics: [], sessions: [], daily: {}, settings: { restSeconds:120, restEndAt:null }, activeSession: null
 };
 
 function versionParts(v){
@@ -214,6 +214,7 @@ if(action==="restoreBackup"){
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }else if(action==="fullReset"){
   try{
+    await Notification.removePending([REST_TIMER_NOTIFICATION_ID]).catch(()=>{});
     state=JSON.parse(JSON.stringify(genericDefaultState));
     state.revision=Date.now()+1;
     writeDataPrimary(JSON.stringify(state));
