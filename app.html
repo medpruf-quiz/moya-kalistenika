@@ -525,13 +525,14 @@ async function nativeAction(action,params={}){
 }
 
 function setUpdateStatus(text,tone=""){const el=document.getElementById("updateStatus");if(!el)return;el.textContent=text;el.className="update-status"+(tone?` ${tone}`:"");}
-function actionRunURL(action){
+function actionRunURL(action,params={}){
   const base=window.__BOOTSTRAP_META__?.runURL;
   if(!base)return null;
-  return base+(base.includes("?")?"&":"?")+"action="+encodeURIComponent(action)+"&t="+Date.now();
+  const query=Object.entries({action,t:Date.now(),...params}).map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join("&");
+  return base+(base.includes("?")?"&":"?")+query;
 }
-async function relaunchScriptableAction(action,statusText){
-  const url=actionRunURL(action);
+async function relaunchScriptableAction(action,statusText,params={}){
+  const url=actionRunURL(action,params);
   if(!url){toast("Действие доступно только в Scriptable");return;}
   if(statusText)setUpdateStatus(statusText);
   try{await flushPersist(true);}catch{}
@@ -711,7 +712,7 @@ document.getElementById("resetActiveSessionBtn").addEventListener("click",e=>arm
 document.getElementById("resetSessionsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю тренировок",()=>{state.sessions=[];save({immediate:true});renderSettings();renderHome();toast("История тренировок очищена");}));
 document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить все измерения",()=>{state.metrics=[];save({immediate:true});renderSettings();renderHome();toast("Измерения очищены");}));
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
-document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{pauseTimer();if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("fullReset");return;}state=clone(DEFAULT_STATE);selectedWorkout="A";timerDuration=state.settings.restSeconds;await save({immediate:true,forceFull:true});renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
+document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{pauseTimer();if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("fullReset",null,{profile:JSON.stringify(state.profile)});return;}state=clone(DEFAULT_STATE);selectedWorkout="A";timerDuration=state.settings.restSeconds;await save({immediate:true,forceFull:true});renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
 document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
