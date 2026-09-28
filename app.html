@@ -495,6 +495,12 @@ function toBase64Utf8(str){
   for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
   return btoa(binary);
 }
+function stateFingerprint(value){
+  const text=typeof value==="string"?value:JSON.stringify(value);
+  let h=2166136261;
+  for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,16777619);}
+  return (h>>>0).toString(16).padStart(8,"0");
+}
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
 async function nativePersist(payload,mode="patch"){
   if(!window.__SCRIPTABLE_MODE__)return;
@@ -557,7 +563,7 @@ async function relaunchScriptableAction(action,statusText,params={}){
   try{await flushPersist(true);}catch{}
   window.location.href=url;
 }
-async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…",{expectedRevision:state.revision});}
+async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…",{expectedRevision:state.revision,expectedHash:stateFingerprint(state)});}
 
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),1800);}
 function armDanger(btn,normalText,onConfirm,armedText="Нажми ещё раз"){
@@ -733,7 +739,7 @@ document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
 document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{pauseTimer();if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("fullReset",null,{profile:JSON.stringify(state.profile)});return;}state=clone(DEFAULT_STATE);selectedWorkout="A";timerDuration=state.settings.restSeconds;await save({immediate:true,forceFull:true});renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
-document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData",null,{expectedRevision:state.revision});return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
+document.getElementById("copyBackupBtn").addEventListener("click",async()=>{if(window.__SCRIPTABLE_MODE__){await relaunchScriptableAction("copyData",null,{expectedRevision:state.revision,expectedHash:stateFingerprint(state)});return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Текущие данные скопированы");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreAutoBackupBtn").addEventListener("click",async()=>{await relaunchScriptableAction("restoreBackup");});
 document.getElementById("restoreBtn").addEventListener("click",e=>{
   const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();
