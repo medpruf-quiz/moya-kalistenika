@@ -255,7 +255,16 @@ async function runManualUpdateCheck(currentHTML){
 const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
 const primaryState=readJSON(dataPath),interruptedState=readJSON(dataTempPath);
 let state=newestState(primaryState,interruptedState);
-if(!state)state=readBackupSnapshot()||genericDefaultState;
+if(!state){
+  const recovered=readBackupSnapshot();
+  if(recovered){
+    state=recovered;
+  }else{
+    state=JSON.parse(JSON.stringify(genericDefaultState));
+    const localProfile=readProfileBaseline();
+    if(localProfile)state.profile=JSON.parse(JSON.stringify(localProfile));
+  }
+}
 if(!primaryState||state!==primaryState){
   try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
 }else if(fm.fileExists(dataTempPath)){
