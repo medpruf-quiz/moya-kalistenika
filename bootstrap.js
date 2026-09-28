@@ -18,7 +18,8 @@ const appBackupPath = fm.joinPath(dir, "app.backup.html");
 const appTempPath = fm.joinPath(dir, "app.tmp.html");
 
 const genericDefaultState = {
-  schema: 4,
+  schema: 5,
+  revision: 0,
   version: "2.5.0",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120 }, activeSession: null
@@ -43,29 +44,40 @@ function writeDataPrimary(text){
   if(fm.fileExists(dataPath))fm.remove(dataPath);
   fm.move(dataTempPath,dataPath);
 }
-function writeDataAtomic(text){
+function writeDataAtomic(text){writeDataPrimary(text);}
+function writeBackupSnapshot(text){
   JSON.parse(text);
-  if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
-  fm.writeString(dataTempPath,text);
-  if(fm.fileExists(dataPath)){
-    if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
-    fm.copy(dataPath,dataBackupPath);
-    fm.remove(dataPath);
-  }
-  fm.move(dataTempPath,dataPath);
+  fm.writeString(dataBackupPath,text);
+}
+function dataSchema(obj){
+  const n=Number(obj?.schema);
+  return Number.isInteger(n)&&n>0?n:2;
 }
 function appVersionFromHTML(text){
   const m=String(text||"").match(/data-app-version="(\d+\.\d+\.\d+)"/);
   return m?m[1]:null;
 }
-function validApp(text,expectedVersion=null){
-  if(typeof text!=="string"||text.length<20000||text.length>600000) return false;
-  if(!text.includes('data-mk-app="true"')||!text.includes("__STATE_JSON__")||!text.includes("__BOOTSTRAP_META_JSON__")) return false;
-  const v=appVersionFromHTML(text);
-  return !!v&&(!expectedVersion||v===expectedVersion);
+function appSchemaFromHTML(text){
+  const src=String(text||"");
+  const attr=src.match(/data-schema="(\d+)"/);
+  if(attr)return Number(attr[1]);
+  const legacy=src.match(/schema:\s*(\d+)/);
+  return legacy?Number(legacy[1]):null;
 }
-function writeAppAtomic(text,expectedVersion=null){
-  if(!validApp(text,expectedVersion)) throw new Error("Invalid app package");
+function validApp(text,expectedVersion=null,expectedSchema=null){
+  if(typeof text!=="string"||text.length<20000||text.length>600000)return false;
+  if(!text.includes('data-mk-app="true"')||!text.includes("__STATE_JSON__")||!text.includes("__BOOTSTRAP_META_JSON__"))return false;
+  const v=appVersionFromHTML(text),schema=appSchemaFromHTML(text);
+  if(!v||!Number.isInteger(schema)||schema<=0)return false;
+  if(expectedVersion&&v!==expectedVersion)return false;
+  if(expectedSchema!=null&&schema!==Number(expectedSchema))return false;
+  return true;
+}
+function appCompatibleWithData(text,currentDataSchema){
+  return validApp(text)&&appSchemaFromHTML(text)>=currentDataSchema;
+}
+function writeAppAtomic(text,expectedVersion=null,expectedSchema=null){
+  if(!validApp(text,expectedVersion,expectedSchema))throw new Error("Invalid app package");
   if(fm.fileExists(appTempPath)) fm.remove(appTempPath);
   fm.writeString(appTempPath,text);
   if(fm.fileExists(appPath)){
@@ -82,38 +94,64 @@ async function requestString(url,timeout=12){
 }
 async function fetchManifest(){
   const meta=JSON.parse(await requestString(VERSION_URL,10));
-  if(!meta||!/^\d+\.\d+\.\d+$/.test(String(meta.version||""))) throw new Error("Invalid version manifest");
-  if(meta.minBootstrap&&!/^\d+\.\d+\.\d+$/.test(String(meta.minBootstrap))) throw new Error("Invalid bootstrap requirement");
+  if(!meta||!/^\d+\.\d+\.\d+$/.test(String(meta.version||"")))throw new Error("Invalid version manifest");
+  if(meta.minBootstrap&&!/^\d+\.\d+\.\d+$/.test(String(meta.minBootstrap)))throw new Error("Invalid bootstrap requirement");
+  if(!Number.isInteger(Number(meta.schema))||Number(meta.schema)<=0)throw new Error("Invalid data schema in manifest");
+  meta.schema=Number(meta.schema);
   return meta;
 }
 async function fetchRemoteApp(meta){
   const text=await requestString(meta?.appUrl||REMOTE_APP_URL,15);
-  if(!validApp(text,meta?.version||null)) throw new Error("Downloaded app failed validation");
+  if(!validApp(text,meta?.version||null,meta?.schema??null))throw new Error("Downloaded app failed validation");
   return text;
 }
-async function downloadInitialApp(){
+async function downloadInitialApp(currentDataSchema=2){
   const meta=await fetchManifest();
-  if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0) throw new Error("Bootstrap too old");
+  if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0)throw new Error("Bootstrap too old");
+  if(meta.schema<currentDataSchema)throw new Error("Remote app is older than local data schema");
   const text=await fetchRemoteApp(meta);
-  writeAppAtomic(text,meta.version);
+  writeAppAtomic(text,meta.version,meta.schema);
   return text;
 }
-async function loadLocalApp(){
+async function loadLocalApp(currentDataSchema){
   if(fm.fileExists(appPath)){
     const text=fm.readString(appPath);
-    if(validApp(text)) return text;
+    if(appCompatibleWithData(text,currentDataSchema))return text;
   }
   if(fm.fileExists(appBackupPath)){
     const backup=fm.readString(appBackupPath);
-    if(validApp(backup)){fm.writeString(appPath,backup);return backup;}
+    if(appCompatibleWithData(backup,currentDataSchema)){
+      fm.writeString(appPath,backup);
+      return backup;
+    }
   }
-  return await downloadInitialApp();
+  return await downloadInitialApp(currentDataSchema);
 }
+async function runAutomaticBackupRestore(currentState){
+  const backup=readJSON(dataBackupPath);
+  if(!backup){
+    const a=new Alert();a.title="Резервная копия";a.message="Автоматическая резервная копия не найдена.";a.addAction("OK");await a.presentAlert();
+    return currentState;
+  }
+  const a=new Alert();
+  a.title="Восстановить резервную копию?";
+  a.message="Текущие данные будут заменены состоянием на начало предыдущего запуска приложения.";
+  a.addAction("Восстановить");
+  a.addCancelAction("Отмена");
+  const choice=await a.presentAlert();
+  if(choice!==0)return currentState;
+  writeDataPrimary(JSON.stringify(backup));
+  const done=new Alert();done.title="Готово";done.message="Автоматическая резервная копия восстановлена.";done.addAction("OK");await done.presentAlert();
+  return backup;
+}
+
 async function runManualUpdateCheck(currentHTML){
   let notice=null,tone="good",html=currentHTML;
   try{
     const meta=await fetchManifest();
     const current=appVersionFromHTML(html)||"0.0.0";
+    const currentDataSchema=dataSchema(state);
+    if(meta.schema<currentDataSchema)throw new Error("Обновление несовместимо с текущей схемой данных");
     if(compareVersions(BOOTSTRAP_VERSION,meta.minBootstrap||"0.0.0")<0){
       notice="Для следующего обновления потребуется новая версия загрузчика Scriptable.";
       tone="warn";
@@ -140,7 +178,7 @@ async function runManualUpdateCheck(currentHTML){
 
     if(choice===0){
       const next=await fetchRemoteApp(meta);
-      writeAppAtomic(next,meta.version);
+      writeAppAtomic(next,meta.version,meta.schema);
       html=next;
       notice="Обновлено до версии "+meta.version+".";
       tone="good";
@@ -156,6 +194,7 @@ async function runManualUpdateCheck(currentHTML){
   return {html,notice,tone};
 }
 
+const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
 let state=readJSON(dataPath);
 if(!state){
   const recovered=readJSON(dataBackupPath);
@@ -163,13 +202,19 @@ if(!state){
   try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
 }
 
+if(action==="restoreBackup"){
+  try{state=await runAutomaticBackupRestore(state);}catch(e){console.log("Backup restore failed: "+e);}
+}else{
+  try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
+}
+
 let appHTML;
 try{
-  appHTML=await loadLocalApp();
+  appHTML=await loadLocalApp(dataSchema(state));
 }catch(e){
   const a=new Alert();
   a.title="Моя калистеника";
-  a.message="Не удалось получить локальный интерфейс. Для первой установки нужен интернет. Данные не удалены.";
+  a.message="Не удалось открыть совместимую локальную версию приложения. Если код повреждён или устарел относительно данных, подключи интернет и запусти снова. Данные не удалены.";
   a.addAction("OK");
   await a.presentAlert();
   Script.complete();
@@ -178,7 +223,6 @@ try{
 
 let updateNotice=null;
 let updateTone="";
-const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
 if(action==="checkUpdate"){
   const result=await runManualUpdateCheck(appHTML);
   appHTML=result.html;
@@ -186,18 +230,21 @@ if(action==="checkUpdate"){
   updateTone=result.tone;
 }
 
-const bootstrapMeta={
-  version:BOOTSTRAP_VERSION,
-  localAppVersion:appVersionFromHTML(appHTML),
-  repo:"medpruf-quiz/moya-kalistenika",
-  runURL:URLScheme.forRunningScript(),
-  updateNotice,
-  updateTone
-};
-
-let html=appHTML
-  .replace("__STATE_JSON__",JSON.stringify(state).replace(/<\/script/gi,"<\\/script"))
-  .replace("__BOOTSTRAP_META_JSON__",JSON.stringify(bootstrapMeta).replace(/<\/script/gi,"<\\/script"));
+function bootstrapMetaFor(appText){
+  return {
+    version:BOOTSTRAP_VERSION,
+    localAppVersion:appVersionFromHTML(appText),
+    repo:"medpruf-quiz/moya-kalistenika",
+    runURL:URLScheme.forRunningScript(),
+    updateNotice,
+    updateTone
+  };
+}
+function injectApp(appText){
+  return appText
+    .replace("__STATE_JSON__",JSON.stringify(state).replace(/<\/script/gi,"<\\/script"))
+    .replace("__BOOTSTRAP_META_JSON__",JSON.stringify(bootstrapMetaFor(appText)).replace(/<\/script/gi,"<\\/script"));
+}
 
 const web=new WebView();
 const incomingState={};
@@ -246,6 +293,37 @@ web.shouldAllowRequest=(req)=>{
   return false;
 };
 
-await web.loadHTML(html,"https://moya-kalistenika.local/");
+async function loadAndPreflight(appText){
+  await web.loadHTML(injectApp(appText),"https://moya-kalistenika.local/");
+  if(compareVersions(appVersionFromHTML(appText)||"0.0.0","2.5.0")<0)return true;
+  try{return !!(await web.evaluateJavaScript("Boolean(window.__MK_READY__)",false));}
+  catch(e){console.log("App preflight failed: "+e);return false;}
+}
+
+let ready=await loadAndPreflight(appHTML);
+if(!ready){
+  let rollback=null;
+  if(fm.fileExists(appBackupPath)){
+    const candidate=fm.readString(appBackupPath);
+    if(appCompatibleWithData(candidate,dataSchema(state)))rollback=candidate;
+  }
+  if(rollback){
+    fm.writeString(appPath,rollback);
+    appHTML=rollback;
+    updateNotice="Новое обновление не прошло проверку запуска. Восстановлена предыдущая совместимая версия.";
+    updateTone="warn";
+    ready=await loadAndPreflight(appHTML);
+  }
+}
+if(!ready){
+  const a=new Alert();
+  a.title="Не удалось открыть приложение";
+  a.message="Код приложения не прошёл проверку запуска. Данные сохранены. Попробуй позже проверить обновление или восстановить совместимую версию кода.";
+  a.addAction("OK");
+  await a.presentAlert();
+  Script.complete();
+  return;
+}
+
 await web.present(true);
 Script.complete();
