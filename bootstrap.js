@@ -12,6 +12,7 @@ if (!fm.fileExists(dir)) fm.createDirectory(dir, true);
 
 const dataPath = fm.joinPath(dir, "data.json");
 const dataBackupPath = fm.joinPath(dir, "data.backup.json");
+const dataBackupTempPath = fm.joinPath(dir, "data.backup.tmp.json");
 const dataTempPath = fm.joinPath(dir, "data.tmp.json");
 const appPath = fm.joinPath(dir, "app.html");
 const appBackupPath = fm.joinPath(dir, "app.backup.html");
@@ -47,7 +48,10 @@ function writeDataPrimary(text){
 function writeDataAtomic(text){writeDataPrimary(text);}
 function writeBackupSnapshot(text){
   JSON.parse(text);
-  fm.writeString(dataBackupPath,text);
+  if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
+  fm.writeString(dataBackupTempPath,text);
+  if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
+  fm.move(dataBackupTempPath,dataBackupPath);
 }
 function dataSchema(obj){
   const n=Number(obj?.schema);
@@ -210,7 +214,10 @@ if(action==="restoreBackup"){
     const text=fm.fileExists(dataPath)?fm.readString(dataPath):JSON.stringify(state);
     Pasteboard.copyString(text);
     const a=new Alert();a.title="Готово";a.message="Текущие данные скопированы в буфер обмена.";a.addAction("OK");await a.presentAlert();
-  }catch(e){console.log("Copy data failed: "+e);}
+  }catch(e){
+    console.log("Copy data failed: "+e);
+    const a=new Alert();a.title="Не удалось скопировать";a.message="Текущие данные не удалось поместить в буфер обмена.";a.addAction("OK");await a.presentAlert();
+  }
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }else if(action==="fullReset"){
   try{
@@ -219,8 +226,12 @@ if(action==="restoreBackup"){
     state.revision=Date.now()+1;
     writeDataPrimary(JSON.stringify(state));
     if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
+    if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
     if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
-  }catch(e){console.log("Full reset failed: "+e);}
+  }catch(e){
+    console.log("Full reset failed: "+e);
+    const a=new Alert();a.title="Сброс не выполнен";a.message="Не удалось безопасно очистить данные. Текущий файл оставлен без намеренной замены.";a.addAction("OK");await a.presentAlert();
+  }
 }else{
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }
