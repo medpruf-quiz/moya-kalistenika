@@ -298,10 +298,11 @@ if(action==="restoreBackup"){
     try{requestedProfile=JSON.parse(args?.queryParameters?.profile||"null");}catch(e){}
     const localProfile=validProfile(requestedProfile)?requestedProfile:(readProfileBaseline()||(validProfile(state?.profile)?state.profile:genericDefaultState.profile));
     writeProfileBaseline(localProfile);
-    state=JSON.parse(JSON.stringify(genericDefaultState));
-    state.profile=JSON.parse(JSON.stringify(localProfile));
-    state.revision=Date.now()+1;
-    writeDataPrimary(JSON.stringify(state));
+    const resetState=JSON.parse(JSON.stringify(genericDefaultState));
+    resetState.profile=JSON.parse(JSON.stringify(localProfile));
+    resetState.revision=Date.now()+1;
+    writeDataPrimary(JSON.stringify(resetState));
+    state=resetState;
     if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
     if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
     if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
