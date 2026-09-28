@@ -18,7 +18,7 @@ const appTempPath = fm.joinPath(dir, "app.tmp.html");
 
 const genericDefaultState = {
   schema: 4,
-  version: "2.4.0",
+  version: "2.4.1",
   profile: { age:30, height:175, startWeight:70, goalMin:75, goalMax:78, proteinMin:110, proteinMax:130 },
   metrics: [], sessions: [], daily: {}, settings: { restSeconds:120 }, activeSession: null
 };
