@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.5.3. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.5.4. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.5.3";
+const BOOTSTRAP_VERSION = "1.5.4";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -250,7 +250,7 @@ async function runAutomaticBackupRestore(currentState){
   return backup;
 }
 
-async function runManualUpdateCheck(currentHTML){
+async function runManualUpdateCheck(currentHTML,{refreshDataBackup=true}={}){
   let notice=null,tone="good",html=currentHTML;
   try{
     const meta=await fetchManifest();
@@ -282,7 +282,8 @@ async function runManualUpdateCheck(currentHTML){
     const choice=await a.presentAlert();
 
     if(choice===0){
-      writeBackupSnapshot(JSON.stringify(state));
+      if(refreshDataBackup)writeBackupSnapshot(JSON.stringify(state));
+      else console.log("MK bootstrap: update continues without refreshing data.backup.json because WebView state was not exactly verified");
       const next=await fetchRemoteApp(meta);
       writeAppAtomic(next,meta.version,meta.schema);
       html=next;
@@ -317,6 +318,7 @@ if(!primaryState||state!==primaryState){
   try{fm.remove(dataTempPath);}catch(e){}
 }
 let updateCheckAllowed=true;
+let updateStateVerified=true;
 let preUpdateNotice=null;
 let preUpdateTone="";
 
@@ -359,11 +361,8 @@ if(action==="restoreBackup"){
   }
 }else if(action==="checkUpdate"){
   const expectedRevision=Number(args?.queryParameters?.expectedRevision)||0,expectedHash=args?.queryParameters?.expectedHash||"";
-  if(!matchesExpectedState(state,expectedRevision,expectedHash)){
-    updateCheckAllowed=false;
-    preUpdateNotice="Не удалось подтвердить последнее сохранение. Данные не изменены; попробуй проверить обновление ещё раз.";
-    preUpdateTone="error";
-  }
+  updateStateVerified=matchesExpectedState(state,expectedRevision,expectedHash);
+  if(!updateStateVerified)console.log("MK bootstrap: WebView/native state mismatch before update check; proceeding with code-only update and preserving existing data.backup.json");
 }else{
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }
@@ -387,7 +386,7 @@ try{
 let updateNotice=preUpdateNotice;
 let updateTone=preUpdateTone;
 if(action==="checkUpdate"&&updateCheckAllowed){
-  const result=await runManualUpdateCheck(appHTML);
+  const result=await runManualUpdateCheck(appHTML,{refreshDataBackup:updateStateVerified});
   appHTML=result.html;
   updateNotice=result.notice;
   updateTone=result.tone;
