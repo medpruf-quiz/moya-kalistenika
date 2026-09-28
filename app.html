@@ -479,7 +479,12 @@ function persistLocal(){
     return false;
   }
 }
-function toBase64Utf8(str){return btoa(unescape(encodeURIComponent(str)));}
+function toBase64Utf8(str){
+  const bytes=new TextEncoder().encode(str);
+  let binary="";
+  for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
+  return btoa(binary);
+}
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
 async function nativePersist(payload,mode="patch"){
   if(!window.__SCRIPTABLE_MODE__)return;
