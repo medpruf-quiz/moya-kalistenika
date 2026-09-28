@@ -1,7 +1,7 @@
 // Моя калистеника — стабильный локальный загрузчик Scriptable
-// Bootstrap 1.4.0. Пользовательские данные хранятся только на iPhone.
+// Bootstrap 1.5.0. Пользовательские данные хранятся только на iPhone.
 
-const BOOTSTRAP_VERSION = "1.4.0";
+const BOOTSTRAP_VERSION = "1.5.0";
 const RAW_BASE = "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/";
 const REMOTE_APP_URL = RAW_BASE + "app.html";
 const VERSION_URL = RAW_BASE + "version.json";
@@ -44,7 +44,6 @@ function writeDataPrimary(text){
   JSON.parse(text);
   if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
   fm.writeString(dataTempPath,text);
-  if(fm.fileExists(dataPath))fm.remove(dataPath);
   fm.move(dataTempPath,dataPath);
 }
 function writeDataAtomic(text){writeDataPrimary(text);}
@@ -52,7 +51,6 @@ function writeBackupSnapshot(text){
   JSON.parse(text);
   if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
   fm.writeString(dataBackupTempPath,text);
-  if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
   fm.move(dataBackupTempPath,dataBackupPath);
 }
 function dataSchema(obj){
@@ -73,7 +71,6 @@ function writeProfileBaseline(profile){
   const text=JSON.stringify(profile);
   if(fm.fileExists(profileBaseTempPath))fm.remove(profileBaseTempPath);
   fm.writeString(profileBaseTempPath,text);
-  if(fm.fileExists(profileBasePath))fm.remove(profileBasePath);
   fm.move(profileBaseTempPath,profileBasePath);
   return true;
 }
@@ -113,12 +110,11 @@ function appCompatibleWithData(text,currentDataSchema){
 }
 function writeAppAtomic(text,expectedVersion=null,expectedSchema=null){
   if(!validApp(text,expectedVersion,expectedSchema))throw new Error("Invalid app package");
-  if(fm.fileExists(appTempPath)) fm.remove(appTempPath);
+  if(fm.fileExists(appTempPath))fm.remove(appTempPath);
   fm.writeString(appTempPath,text);
   if(fm.fileExists(appPath)){
-    if(fm.fileExists(appBackupPath)) fm.remove(appBackupPath);
+    if(fm.fileExists(appBackupPath))fm.remove(appBackupPath);
     fm.copy(appPath,appBackupPath);
-    fm.remove(appPath);
   }
   fm.move(appTempPath,appPath);
 }
@@ -233,8 +229,8 @@ async function runManualUpdateCheck(currentHTML){
 const action=(args&&args.queryParameters&&args.queryParameters.action)||"";
 let state=readJSON(dataPath);
 if(!state){
-  const recovered=readJSON(dataBackupPath);
-  state=recovered||genericDefaultState;
+  const interrupted=readJSON(dataTempPath),recovered=readJSON(dataBackupPath);
+  state=interrupted||recovered||genericDefaultState;
   try{writeDataPrimary(JSON.stringify(state));}catch(e){console.log("Primary data recovery failed: "+e);}
 }
 try{ensureProfileBaseline(state);}catch(e){console.log("Profile baseline init failed: "+e);}
@@ -302,7 +298,8 @@ function bootstrapMetaFor(appText){
     repo:"medpruf-quiz/moya-kalistenika",
     runURL:URLScheme.forRunningScript(),
     updateNotice,
-    updateTone
+    updateTone,
+    resetLocalCache: action==="fullReset"
   };
 }
 function injectApp(appText){
@@ -324,6 +321,11 @@ function cleanupStateChunks(){
 }
 
 const REST_TIMER_NOTIFICATION_ID="moya-kalistenika-rest-timer";
+let restNotificationChain=Promise.resolve();
+function queueRestNotification(task){
+  restNotificationChain=restNotificationChain.catch(()=>{}).then(task);
+  return restNotificationChain;
+}
 async function cancelRestNotification(){
   try{await Notification.removePending([REST_TIMER_NOTIFICATION_ID]);}
   catch(e){console.log("Rest notification cancel failed: "+e);}
@@ -374,17 +376,18 @@ web.shouldAllowRequest=(req)=>{
           }
           const currentRevision=Number(state?.revision)||0,nextRevision=Number(next?.revision)||0;
           if(nextRevision>=currentRevision){
+            const profileChanged=item.mode==="full"||Object.prototype.hasOwnProperty.call(payload,"profile");
             writeDataAtomic(JSON.stringify(next));
             state=next;
-            if(validProfile(next?.profile))writeProfileBaseline(next.profile);
+            if(profileChanged&&validProfile(next?.profile))writeProfileBaseline(next.profile);
           }
         }
       }
       delete incomingState[id];
     }else if(url.includes("/action/rest-timer-start")){
-      scheduleRestNotification(Number(getParam(url,"seconds"))).catch(e=>console.log("Rest timer start failed: "+e));
+      queueRestNotification(()=>scheduleRestNotification(Number(getParam(url,"seconds")))).catch(e=>console.log("Rest timer start failed: "+e));
     }else if(url.includes("/action/rest-timer-stop")){
-      cancelRestNotification().catch(e=>console.log("Rest timer stop failed: "+e));
+      queueRestNotification(cancelRestNotification).catch(e=>console.log("Rest timer stop failed: "+e));
     }
     cleanupStateChunks();
   }catch(e){
