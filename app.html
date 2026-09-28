@@ -539,7 +539,7 @@ async function relaunchScriptableAction(action,statusText,params={}){
   try{await flushPersist(true);}catch{}
   window.location.href=url;
 }
-async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…");}
+async function checkForUpdate(){await relaunchScriptableAction("checkUpdate","Сохраняю данные и открываю проверку…",{expectedRevision:state.revision});}
 
 function toast(msg){const el=document.getElementById("toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("show"),1800);}
 function armDanger(btn,normalText,onConfirm,armedText="Нажми ещё раз"){
