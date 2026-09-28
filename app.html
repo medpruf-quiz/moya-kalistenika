@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru" data-mk-app="true" data-app-version="2.4.3">
+<html lang="ru" data-mk-app="true" data-app-version="2.5.0">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
@@ -197,7 +197,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
         <button class="btn btn-soft btn-block" id="copyBackupBtn">Скопировать резервную копию</button>
         <details class="restore-box"><summary>Восстановить из сохранённого текста</summary><textarea id="restoreText" rows="6" placeholder="Вставь сюда текст резервной копии"></textarea><button class="btn btn-soft btn-block" id="restoreBtn">Восстановить данные</button></details>
       </section>
-      <section class="panel"><span class="overline">ОБНОВЛЕНИЯ</span><h2>Код приложения</h2><p>Проверка GitHub выполняется только по твоему нажатию. Тренировки, вес, питание и другие личные данные никуда не отправляются.</p><div class="update-status" id="updateStatus">Установлена версия 2.4.1. Проверка обновлений ещё не выполнялась.</div><div class="update-actions"><button class="btn btn-soft btn-block" id="checkUpdateBtn">Проверить обновление</button><button class="btn btn-primary btn-block hidden" id="installUpdateBtn">Установить обновление</button></div></section>
+      <section class="panel"><span class="overline">ОБНОВЛЕНИЯ</span><h2>Код приложения</h2><p>Проверка GitHub выполняется только по твоему нажатию. Тренировки, вес, питание и другие личные данные никуда не отправляются.</p><div class="update-status" id="updateStatus">Проверка обновлений ещё не выполнялась.</div><div class="update-actions"><button class="btn btn-soft btn-block" id="checkUpdateBtn">Проверить обновление</button><button class="btn btn-primary btn-block hidden" id="installUpdateBtn">Установить обновление</button></div></section>
       <section class="panel compact"><div class="info-line"><b>Версия</b><span id="appVersion"></span></div><div class="info-line"><b>Интернет</b><span>не нужен</span></div><div class="info-line"><b>Хранилище</b><span>локально на iPhone</span></div></section>
     </section>
   </main>
@@ -213,7 +213,7 @@ button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}input,tex
 </div>
 <script>window.__INITIAL_STATE__=__STATE_JSON__;</script>
 <script>window.__BOOTSTRAP_META__=__BOOTSTRAP_META_JSON__;</script>
-<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.4.3";
+<script>window.__SCRIPTABLE_MODE__=true;</script><script>const APP_VERSION = "2.5.0";
 const STORAGE_KEY = "moya-kalistenika-v2";
 
 const DEFAULT_STATE = {
@@ -296,33 +296,121 @@ function parseLocalDate(iso){ return new Date(iso+"T12:00:00"); }
 function formatShort(iso){ return parseLocalDate(iso).toLocaleDateString("ru-RU",{day:"2-digit",month:"short"}); }
 function escapeHtml(s){ return String(s ?? "").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
 
+function isValidISODate(value){
+  if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;
+  const [y,m,d]=value.split("-").map(Number),x=new Date(y,m-1,d,12,0,0,0);
+  return x.getFullYear()===y&&x.getMonth()===m-1&&x.getDate()===d;
+}
+function boundedNumber(value,min,max,fallback=null){
+  const n=safeNumber(value,null);
+  return n!=null&&n>=min&&n<=max?n:fallback;
+}
+function normalizeSet(raw){
+  const x=raw&&typeof raw==="object"?raw:{};
+  return {
+    reps:boundedNumber(x.reps,0,200,null),
+    rir:boundedNumber(x.rir,0,6,null)
+  };
+}
 function normalizeDaily(rawDaily, rawSchema){
   const out={};
   if(!rawDaily || typeof rawDaily!=="object") return out;
   for(const [date,raw] of Object.entries(rawDaily)){
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(date) || !raw || typeof raw!=="object") continue;
-    // До схемы 3 старое поле protein означало только ручной счётчик, а галочки meals не влияли на него.
-    const manualProtein = safeNumber(raw.manualProtein, safeNumber(raw.protein,0));
-    const mealDone = rawSchema>=3 && raw.mealDone && typeof raw.mealDone==="object" ? {...raw.mealDone} : {};
-    const mealChoices = raw.mealChoices && typeof raw.mealChoices==="object" ? {...raw.mealChoices} : {};
-    out[date]={manualProtein:clamp(manualProtein||0,0,500),mealDone,mealChoices};
+    if(!isValidISODate(date)||!raw||typeof raw!=="object")continue;
+    const manualProtein=clamp(safeNumber(raw.manualProtein,safeNumber(raw.protein,0))||0,0,500);
+    const mealDone={},mealChoices={};
+    for(const type of Object.keys(MEALS)){
+      if(rawSchema>=3&&raw.mealDone&&typeof raw.mealDone==="object"&&raw.mealDone[type]===true)mealDone[type]=true;
+      const choice=safeNumber(raw.mealChoices?.[type],null);
+      if(choice!=null&&Number.isInteger(choice)&&choice>=0&&choice<MEALS[type].length)mealChoices[type]=choice;
+    }
+    out[date]={manualProtein,mealDone,mealChoices};
   }
   return out;
 }
-
+function normalizeHistoricalExercise(raw,workout,index){
+  if(!raw||typeof raw!=="object"||!Array.isArray(raw.sets))return null;
+  const def=WORKOUTS[workout]?.exercises?.[index];
+  const id=typeof raw.id==="string"&&raw.id?raw.id:def?.id;
+  if(!id)return null;
+  return {
+    id,
+    name:typeof raw.name==="string"?raw.name:(def?.name||""),
+    unit:typeof raw.unit==="string"?raw.unit:(def?.unit||"повт."),
+    sets:raw.sets.map(normalizeSet)
+  };
+}
+function normalizeHistoricalSession(raw,index){
+  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||!Array.isArray(raw.exercises))return null;
+  const created=safeNumber(raw.created,parseLocalDate(raw.date).getTime());
+  const exercises=raw.exercises.map((ex,i)=>normalizeHistoricalExercise(ex,raw.workout,i)).filter(Boolean);
+  if(!exercises.length)return null;
+  return {
+    id:typeof raw.id==="string"&&raw.id?raw.id:`legacy-${raw.date}-${raw.workout}-${Math.round(created)}-${index}`,
+    date:raw.date,
+    created,
+    finishedAt:safeNumber(raw.finishedAt,null),
+    workout:raw.workout,
+    notes:typeof raw.notes==="string"?raw.notes:"",
+    exercises
+  };
+}
+function normalizeActiveSession(raw){
+  if(!raw||typeof raw!=="object"||!WORKOUTS[raw.workout]||!isValidISODate(raw.date)||!Array.isArray(raw.exercises))return null;
+  const defs=WORKOUTS[raw.workout].exercises;
+  const oldExercises=raw.exercises;
+  const exercises=defs.map((def,ei)=>{
+    const old=oldExercises.find(x=>x&&x.id===def.id)||oldExercises[ei]||{};
+    const oldSets=Array.isArray(old.sets)?old.sets:[];
+    return {
+      id:def.id,
+      name:def.name,
+      unit:def.unit||"повт.",
+      sets:Array.from({length:def.sets},(_,si)=>normalizeSet(oldSets[si]))
+    };
+  });
+  return {
+    id:typeof raw.id==="string"&&raw.id?raw.id:`s-${safeNumber(raw.created,Date.now())}`,
+    date:raw.date,
+    created:safeNumber(raw.created,Date.now()),
+    workout:raw.workout,
+    notes:typeof raw.notes==="string"?raw.notes:"",
+    exercises
+  };
+}
 function normalizeState(raw){
   const s=clone(DEFAULT_STATE);
-  if(!raw || typeof raw!=="object") return s;
+  if(!raw||typeof raw!=="object")return s;
   const rawSchema=safeNumber(raw.schema,2);
-  s.profile={...s.profile,...(raw.profile||{})};
-  ["age","height","startWeight","goalMin","goalMax","proteinMin","proteinMax"].forEach(k=>s.profile[k]=safeNumber(s.profile[k],DEFAULT_STATE.profile[k]));
-  s.metrics=Array.isArray(raw.metrics)?raw.metrics.filter(x=>x&&/^\d{4}-\d{2}-\d{2}$/.test(x.date||"")).map(x=>({date:x.date,weight:safeNumber(x.weight),waist:safeNumber(x.waist),sleep:safeNumber(x.sleep)})).sort((a,b)=>a.date.localeCompare(b.date)):[];
-  s.sessions=Array.isArray(raw.sessions)?raw.sessions.filter(x=>x&&x.date&&x.workout&&Array.isArray(x.exercises)).map(x=>({...x,created:safeNumber(x.created,Date.now())})):[];
+  const p=raw.profile&&typeof raw.profile==="object"?raw.profile:{};
+  s.profile={
+    age:boundedNumber(p.age,16,80,s.profile.age),
+    height:boundedNumber(p.height,120,230,s.profile.height),
+    startWeight:boundedNumber(p.startWeight,40,150,s.profile.startWeight),
+    goalMin:boundedNumber(p.goalMin,40,150,s.profile.goalMin),
+    goalMax:boundedNumber(p.goalMax,40,150,s.profile.goalMax),
+    proteinMin:boundedNumber(p.proteinMin,20,300,s.profile.proteinMin),
+    proteinMax:boundedNumber(p.proteinMax,20,300,s.profile.proteinMax)
+  };
+  if(s.profile.goalMax<s.profile.goalMin)[s.profile.goalMin,s.profile.goalMax]=[s.profile.goalMax,s.profile.goalMin];
+  if(s.profile.proteinMax<s.profile.proteinMin)[s.profile.proteinMin,s.profile.proteinMax]=[s.profile.proteinMax,s.profile.proteinMin];
+  s.metrics=Array.isArray(raw.metrics)?raw.metrics.map(x=>{
+    if(!x||!isValidISODate(x.date))return null;
+    const item={
+      date:x.date,
+      weight:boundedNumber(x.weight,40,150,null),
+      waist:boundedNumber(x.waist,45,150,null),
+      sleep:boundedNumber(x.sleep,0,16,null)
+    };
+    return item.weight==null&&item.waist==null&&item.sleep==null?null:item;
+  }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date)):[];
+  s.sessions=Array.isArray(raw.sessions)?raw.sessions.map(normalizeHistoricalSession).filter(Boolean):[];
   s.daily=normalizeDaily(raw.daily,rawSchema);
   s.settings={...s.settings,...(raw.settings||{})};
   s.settings.restSeconds=[60,90,120,180].includes(Number(s.settings.restSeconds))?Number(s.settings.restSeconds):120;
-  s.activeSession=raw.activeSession&&raw.activeSession.workout&&Array.isArray(raw.activeSession.exercises)?raw.activeSession:null;
-  s.version=APP_VERSION;s.schema=4;
+  s.activeSession=normalizeActiveSession(raw.activeSession);
+  s.version=APP_VERSION;
+  s.schema=4;
   return s;
 }
 function loadInitialState(){
@@ -332,7 +420,7 @@ function loadInitialState(){
 
 let state=loadInitialState();
 let selectedWorkout=state.activeSession?.workout||"A";
-let saveTimer=null,persistRunning=false,persistQueued=false;
+let saveTimer=null,persistChain=Promise.resolve();
 let timerInterval=null,timerEndAt=null,timerDuration=state.settings.restSeconds||90;
 const dangerTimers=new WeakMap();
 
@@ -340,21 +428,33 @@ function persistLocal(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(stat
 function toBase64Utf8(str){return btoa(unescape(encodeURIComponent(str)));}
 function bridgeImage(url){return new Promise(resolve=>{const img=new Image();let done=false;const finish=()=>{if(done)return;done=true;resolve();};img.onload=finish;img.onerror=finish;img.src=url;setTimeout(finish,350);});}
 async function nativePersist(snapshot){
-  if(!window.__SCRIPTABLE_MODE__) return;
+  if(!window.__SCRIPTABLE_MODE__)return;
   const id=Date.now().toString(36)+Math.random().toString(36).slice(2,7),b64=toBase64Utf8(snapshot),chunks=[];
   for(let i=0;i<b64.length;i+=3500)chunks.push(b64.slice(i,i+3500));
   await bridgeImage(`https://scriptable.local/state/begin?id=${id}&parts=${chunks.length}`);
   for(let i=0;i<chunks.length;i++)await bridgeImage(`https://scriptable.local/state/chunk?id=${id}&i=${i}&d=${encodeURIComponent(chunks[i])}`);
   await bridgeImage(`https://scriptable.local/state/end?id=${id}`);
 }
-async function flushPersist(){
-  if(persistRunning){persistQueued=true;return;}
-  persistRunning=true;
-  do{persistQueued=false;const snapshot=JSON.stringify(state);try{await nativePersist(snapshot);}catch{}}while(persistQueued);
-  persistRunning=false;
+function flushPersist(){
+  clearTimeout(saveTimer);
+  const snapshot=JSON.stringify(state);
+  persistChain=persistChain.catch(()=>{}).then(()=>nativePersist(snapshot));
+  return persistChain;
 }
-function save({immediate=false}={}){state.version=APP_VERSION;state.schema=4;persistLocal();clearTimeout(saveTimer);if(immediate)flushPersist();else saveTimer=setTimeout(flushPersist,180);}
-async function nativeAction(action){if(!window.__SCRIPTABLE_MODE__)return false;await bridgeImage(`https://scriptable.local/action/${action}?t=${Date.now()}`);return true;}
+function save({immediate=false}={}){
+  state.version=APP_VERSION;
+  state.schema=4;
+  persistLocal();
+  clearTimeout(saveTimer);
+  if(immediate)return flushPersist();
+  saveTimer=setTimeout(()=>{flushPersist();},180);
+  return persistChain;
+}
+async function nativeAction(action){
+  if(!window.__SCRIPTABLE_MODE__)return false;
+  await bridgeImage(`https://scriptable.local/action/${action}?t=${Date.now()}`);
+  return true;
+}
 
 let pendingUpdateMeta=null;
 function setUpdateStatus(text,tone=""){const el=document.getElementById("updateStatus");if(!el)return;el.textContent=text;el.className="update-status"+(tone?` ${tone}`:"");}
@@ -363,10 +463,11 @@ function updateRunURL(){
   if(!base)return null;
   return base+(base.includes("?")?"&":"?")+"action=checkUpdate&t="+Date.now();
 }
-function checkForUpdate(){
+async function checkForUpdate(){
   const url=updateRunURL();
   if(!url){setUpdateStatus("Проверка обновлений доступна только в Scriptable.","error");return;}
-  setUpdateStatus("Открываю проверку обновлений…");
+  setUpdateStatus("Сохраняю данные и открываю проверку…");
+  try{await flushPersist();}catch{}
   window.location.href=url;
 }
 function installPendingUpdate(){checkForUpdate();}
@@ -471,7 +572,27 @@ document.getElementById("addProteinBtn").addEventListener("click",()=>{const el=
 document.getElementById("resetNutritionBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить сегодня",()=>{state.daily[todayISO()]={manualProtein:0,mealDone:{},mealChoices:{}};save({immediate:true});renderNutrition();renderHome();toast("Питание за сегодня сброшено");},"Ещё раз — сбросить"));
 
 function inputNumber(id){const v=document.getElementById(id).value;return v===""?null:safeNumber(v,null);}
-function saveMetric(){const date=document.getElementById("metricDate").value||todayISO(),weight=inputNumber("metricWeight"),waist=inputNumber("metricWaist"),sleep=inputNumber("metricSleep");if(weight==null&&waist==null&&sleep==null){toast("Добавь хотя бы один показатель");return;}if(weight!=null&&(weight<40||weight>150)){toast("Проверь вес");return;}if(waist!=null&&(waist<45||waist>150)){toast("Проверь талию");return;}if(sleep!=null&&(sleep<0||sleep>16)){toast("Проверь сон");return;}state.metrics=state.metrics.filter(x=>x.date!==date);state.metrics.push({date,weight,waist,sleep});state.metrics.sort((a,b)=>a.date.localeCompare(b.date));save({immediate:true});["metricWeight","metricWaist","metricSleep"].forEach(id=>document.getElementById(id).value="");renderProgress();renderHome();toast("Измерение сохранено");}
+function saveMetric(){
+  const date=document.getElementById("metricDate").value||todayISO(),weight=inputNumber("metricWeight"),waist=inputNumber("metricWaist"),sleep=inputNumber("metricSleep");
+  if(!isValidISODate(date)){toast("Проверь дату");return;}
+  if(weight==null&&waist==null&&sleep==null){toast("Добавь хотя бы один показатель");return;}
+  if(weight!=null&&(weight<40||weight>150)){toast("Проверь вес");return;}
+  if(waist!=null&&(waist<45||waist>150)){toast("Проверь талию");return;}
+  if(sleep!=null&&(sleep<0||sleep>16)){toast("Проверь сон");return;}
+  const previous=state.metrics.find(x=>x.date===date)||{date,weight:null,waist:null,sleep:null};
+  const merged={
+    date,
+    weight:weight??previous.weight??null,
+    waist:waist??previous.waist??null,
+    sleep:sleep??previous.sleep??null
+  };
+  state.metrics=state.metrics.filter(x=>x.date!==date);
+  state.metrics.push(merged);
+  state.metrics.sort((a,b)=>a.date.localeCompare(b.date));
+  save({immediate:true});
+  ["metricWeight","metricWaist","metricSleep"].forEach(id=>document.getElementById(id).value="");
+  renderProgress();renderHome();toast("Измерение сохранено");
+}
 document.getElementById("saveMetricBtn").addEventListener("click",saveMetric);
 
 function renderProgress(){
@@ -492,7 +613,7 @@ document.getElementById("resetActiveSessionBtn").addEventListener("click",e=>arm
 document.getElementById("resetSessionsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю тренировок",()=>{state.sessions=[];save({immediate:true});renderSettings();renderHome();toast("История тренировок очищена");}));
 document.getElementById("resetMetricsBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить все измерения",()=>{state.metrics=[];save({immediate:true});renderSettings();renderHome();toast("Измерения очищены");}));
 document.getElementById("resetNutritionHistoryBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Очистить историю питания",()=>{state.daily={};save({immediate:true});renderSettings();renderHome();toast("История питания очищена");}));
-document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",()=>{state=clone(DEFAULT_STATE);selectedWorkout="A";pauseTimer();timerDuration=state.settings.restSeconds;save({immediate:true});renderSettings();renderHome();toast("Приложение сброшено");},"Ещё раз — удалить всё"));
+document.getElementById("resetEverythingBtn").addEventListener("click",e=>armDanger(e.currentTarget,"Сбросить приложение полностью",async()=>{state=clone(DEFAULT_STATE);selectedWorkout="A";pauseTimer();timerDuration=state.settings.restSeconds;try{await save({immediate:true});await nativeAction("purge-data-backup");}catch{}renderSettings();renderHome();toast("Приложение полностью сброшено");},"Ещё раз — удалить всё"));
 
 document.getElementById("copyBackupBtn").addEventListener("click",async()=>{await flushPersist();if(await nativeAction("copy-backup")){toast("Резервная копия скопирована");return;}try{await navigator.clipboard.writeText(JSON.stringify(state,null,2));toast("Резервная копия скопирована");}catch{document.getElementById("restoreText").value=JSON.stringify(state,null,2);toast("Копия показана ниже");}});
 document.getElementById("restoreBtn").addEventListener("click",e=>{const btn=e.currentTarget,text=document.getElementById("restoreText").value.trim();if(!text){toast("Сначала вставь сохранённый текст");return;}let parsed;try{parsed=JSON.parse(text);if(!Array.isArray(parsed.metrics)||!Array.isArray(parsed.sessions)||!parsed.profile)throw new Error();}catch{toast("Не удалось распознать резервную копию");return;}armDanger(btn,"Восстановить данные",()=>{state=normalizeState(parsed);selectedWorkout=state.activeSession?.workout||"A";timerDuration=state.settings.restSeconds;save({immediate:true});document.getElementById("restoreText").value="";renderSettings();renderHome();toast("Данные восстановлены");},"Ещё раз — восстановить");});
