@@ -214,7 +214,7 @@ if(action==="restoreBackup"){
   try{writeBackupSnapshot(JSON.stringify(state));}catch(e){console.log("Backup snapshot failed: "+e);}
 }else if(action==="fullReset"){
   try{
-    await Notification.removePending([REST_TIMER_NOTIFICATION_ID]).catch(()=>{});
+    await Notification.removePending(["moya-kalistenika-rest-timer"]).catch(()=>{});
     state=JSON.parse(JSON.stringify(genericDefaultState));
     state.revision=Date.now()+1;
     writeDataPrimary(JSON.stringify(state));
