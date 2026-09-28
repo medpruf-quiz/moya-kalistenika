@@ -1,11 +1,11 @@
 {
-  "version": "2.4.2",
+  "version": "2.4.3",
   "schema": 4,
-  "minBootstrap": "1.1.0",
+  "minBootstrap": "1.2.0",
   "appUrl": "https://raw.githubusercontent.com/medpruf-quiz/moya-kalistenika/main/app.html",
   "publishedAt": "2026-09-28",
   "notes": [
-    "Исправлена проверка обновлений в Scriptable: GitHub теперь проверяется нативным Request, а не из WebView.",
-    "Пользовательские данные по-прежнему остаются только на iPhone."
+    "Проверка обновлений больше не использует обратные вызовы в открытый WebView.",
+    "Кнопка обновления перезапускает Scriptable в специальном режиме; проверка и установка выполняются нативно до открытия интерфейса."
   ]
 }
