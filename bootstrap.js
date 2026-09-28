@@ -303,9 +303,14 @@ if(action==="restoreBackup"){
     resetState.revision=Date.now()+1;
     writeDataPrimary(JSON.stringify(resetState));
     state=resetState;
-    if(fm.fileExists(dataBackupPath))fm.remove(dataBackupPath);
-    if(fm.fileExists(dataBackupTempPath))fm.remove(dataBackupTempPath);
-    if(fm.fileExists(dataTempPath))fm.remove(dataTempPath);
+    for(const p of [dataBackupPath,dataBackupTempPath,dataTempPath]){
+      if(!fm.fileExists(p))continue;
+      try{fm.remove(p);}
+      catch(e){
+        try{fm.writeString(p,JSON.stringify(resetState));}
+        catch(inner){console.log("Reset cleanup failed for "+p+": "+inner);}
+      }
+    }
   }catch(e){
     console.log("Full reset failed: "+e);
     const a=new Alert();a.title="Сброс не выполнен";a.message="Не удалось безопасно очистить данные. Текущий файл оставлен без намеренной замены.";a.addAction("OK");await a.presentAlert();
