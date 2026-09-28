@@ -81,7 +81,7 @@ function validProfile(profile){
   if(keys.some(k=>!Number.isFinite(Number(profile[k]))))return false;
   const p=Object.fromEntries(keys.map(k=>[k,Number(profile[k])]));
   return p.age>=16&&p.age<=80&&p.height>=120&&p.height<=230&&p.startWeight>=40&&p.startWeight<=150&&
-    p.goalMin>=40&&p.goalMin<=150&&p.goalMax>=p.goalMin&&p.goalMax<=150&&
+    p.goalMin>=p.startWeight&&p.goalMin>=40&&p.goalMin<=150&&p.goalMax>=p.goalMin&&p.goalMax<=150&&
     p.proteinMin>=20&&p.proteinMin<=300&&p.proteinMax>=p.proteinMin&&p.proteinMax<=300;
 }
 function writeProfileBaseline(profile){
