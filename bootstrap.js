@@ -268,8 +268,8 @@ web.shouldAllowRequest=(req)=>{
   }
   try{
     if(url.includes("/state/begin")){
-      const id=getParam(url,"id"),parts=Number(getParam(url,"parts"));
-      if(id&&Number.isInteger(parts)&&parts>0&&parts<5000) incomingState[id]={parts:new Array(parts),created:Date.now()};
+      const id=getParam(url,"id"),parts=Number(getParam(url,"parts")),mode=getParam(url,"mode")||"full";
+      if(id&&Number.isInteger(parts)&&parts>0&&parts<5000&&(mode==="full"||mode==="patch"))incomingState[id]={parts:new Array(parts),mode,created:Date.now()};
     }else if(url.includes("/state/chunk")){
       const id=getParam(url,"id"),i=Number(getParam(url,"i")),d=getParam(url,"d");
       if(incomingState[id]&&Number.isInteger(i)&&i>=0&&i<incomingState[id].parts.length&&d!=null) incomingState[id].parts[i]=d;
@@ -278,7 +278,23 @@ web.shouldAllowRequest=(req)=>{
       if(item&&item.parts.every(x=>typeof x==="string")){
         const data=Data.fromBase64String(item.parts.join(""));
         const text=data?data.toRawString():null;
-        if(text) writeDataAtomic(text);
+        if(text){
+          const payload=JSON.parse(text);
+          if(!payload||typeof payload!=="object"||Array.isArray(payload))throw new Error("Invalid state payload");
+          let next;
+          if(item.mode==="full"){
+            next=payload;
+          }else{
+            next={...state};
+            const allowed=["schema","revision","version","profile","metrics","sessions","daily","settings","activeSession"];
+            for(const key of allowed)if(Object.prototype.hasOwnProperty.call(payload,key))next[key]=payload[key];
+          }
+          const currentRevision=Number(state?.revision)||0,nextRevision=Number(next?.revision)||0;
+          if(nextRevision>=currentRevision){
+            writeDataAtomic(JSON.stringify(next));
+            state=next;
+          }
+        }
       }
       delete incomingState[id];
     }else if(url.includes("/action/copy-backup")){
